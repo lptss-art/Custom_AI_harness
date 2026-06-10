@@ -49,22 +49,15 @@ with col1:
     st.subheader("Nexus Reasoning Tree")
     st.write(f"**Current Generation:** {st.session_state.riddle_state.current_generation}")
 
-    if st.button("🌱 1. Propose Parallel Hypotheses (DeepSeek)"):
-        with st.spinner("Proposer Agents generating ideas..."):
-            asyncio.run(st.session_state.engine.propose_paths(n=5))
+    if st.button("▶️ Run Automatic Generation Cycle"):
+        with st.status("Running Nexus Cycle...", expanded=True) as status:
+            def update_status(msg):
+                status.write(msg)
+            asyncio.run(st.session_state.engine.run_auto_cycle(n=5, log_callback=update_status))
+            status.update(label="Cycle Complete!", state="complete", expanded=False)
         st.rerun()
 
-    if st.button("🔍 2. Run Critics (DeepSeek)"):
-        with st.spinner("Critic Agents evaluating..."):
-            asyncio.run(st.session_state.engine.run_critiques())
-        st.rerun()
-
-    if st.button("⚔️ 3. Run Elo Tournament (DeepSeek Judge)"):
-        with st.spinner("Judge Agent running pairwise comparisons..."):
-            asyncio.run(st.session_state.engine.run_elo_tournament())
-        st.rerun()
-
-    if st.button("🏁 4. Branch Next Generation (Checkpoint)"):
+    if st.button("🏁 Branch & Iterate Next Loop"):
         with st.spinner("Selecting top Elo idea to branch..."):
             st.session_state.engine.branch_next_generation()
         st.success("Branched! Ready for next generation.")

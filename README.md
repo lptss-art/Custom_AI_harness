@@ -6,12 +6,15 @@ Inspired by the architectures of **DeepMind's Co-Scientist (Nature 2026)** and t
 
 ## 🧠 How It Works
 
-RiddleNexus operates using a Dual-API routing system and three distinct agent personas:
+RiddleNexus operates using a Dual-API routing system and a highly automated reasoning loop driven by distinct agent personas:
 
 *   **Multimodal Input Processing (Gemini):** Uses the Google Gemini API (via `google-genai`) to ingest images, maps, and visual ciphers, extracting their contents into a textual context.
-*   **The Proposer Agent (DeepSeek):** Generates $N$ parallel, independent reasoning paths based on the known clues and the current state of the reasoning tree.
-*   **The Critic Agent (DeepSeek):** Rigorously reviews each proposed path, searching for logical flaws, cryptographic errors, or inconsistencies with visual clues. It outputs a structured critique.
-*   **The Judge Agent (DeepSeek):** Implements an **Elo Tournament**. Competing hypotheses are pitted against each other in pairwise duels. The Judge reads the ideas *and* their critiques to decide the winner.
+*   **Automated Propose-Critique-Improve Cycle:**
+    *   **The Proposer Agent (DeepSeek)** generates $N$ parallel, independent reasoning paths based on the known clues.
+    *   **The Critic Agent (DeepSeek)** rigorously reviews each proposed path, outputting an alignment score and structured feedback regarding logic, flaws, or inconsistencies.
+    *   **The Refiner Agent (DeepSeek)** iteratively takes the original idea and the Critic's feedback, actively rewriting the hypothesis to improve it until it meets a high alignment score threshold (looping up to 3 times per idea).
+*   **Vector Space Deduplication & Merging:** To prevent reasoning fragmentation, RiddleNexus maps all refined ideas into a vector space using Gemini's text embedding API (`text-embedding-004`). Ideas with a high cosine similarity (>0.85) are passed to a **Synthesizer Agent (DeepSeek)**, which merges them into a single, comprehensive, unified hypothesis.
+*   **The Judge Agent (DeepSeek):** Implements an **Elo Tournament** on the final, unique set of ideas. Competing hypotheses are pitted against each other in pairwise duels. The Judge reads the ideas *and* their final critiques to mathematically rank them via Elo scores.
 *   **Iterative Branching:** The hypothesis with the highest Elo rating becomes the immutable baseline checkpoint for the next generation of reasoning, creating a robust "thought tree".
 
 ## 🛠️ Installation
@@ -53,8 +56,7 @@ RiddleNexus is operated via a clean, interactive Streamlit interface.
    * Click "Analyze Images with Gemini" to extract visual data into the context.
 
 3. **Run the Nexus Loop:**
-   Follow the numbered steps in the UI to walk through a generation:
-   * **Step 1:** Click *Propose Parallel Hypotheses* to generate ideas.
-   * **Step 2:** Click *Run Critics* to generate counter-arguments for each idea.
-   * **Step 3:** Click *Run Elo Tournament* to evaluate the ideas and rank them on the leaderboard.
-   * **Step 4:** Click *Branch Next Generation* to lock in the top-ranked idea as fact and move to the next depth of reasoning.
+   Interact with the reasoning tree in the UI:
+   * **Run Automatic Generation Cycle:** Click this button to launch the automated engine. The UI will stream real-time logs indicating progress as the engine generates, critiques, refines, vectorizes, merges, and scores the ideas.
+   * **Review Leaderboard:** Once the automated cycle completes, expand the current ideas to view their reasoning, critic feedback, and final Elo ranking.
+   * **Branch & Iterate Next Loop:** Click this button to manually lock in the top-ranked idea as fact. This advances the depth of reasoning, waiting for you to run the next cycle.
