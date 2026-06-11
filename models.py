@@ -2,25 +2,26 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 import uuid
 
+class ScoreGrid(BaseModel):
+    cryptography: int = Field(default=0)
+    history: int = Field(default=0)
+    geography: int = Field(default=0)
+    logic: int = Field(default=0)
+
 class Critique(BaseModel):
     weaknesses: List[str] = Field(default_factory=list, description="List of identified weaknesses in the idea.")
-    alignment_score: float = Field(default=0.0, description="Score from 0 to 1 indicating how well the idea aligns with known facts.")
+    score_grid: Optional[ScoreGrid] = None
     feedback: str = Field(..., description="A detailed textual critique.")
 
 class Idea(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     text: str = Field(..., description="The reasoning path or hypothesis.")
     parent_id: Optional[str] = Field(default=None, description="ID of the parent idea this evolved from.")
-    elo_rating: float = Field(default=1200.0)
+    total_score: float = Field(default=0.0)
+    abstracted_facts: Optional[Dict[str, str]] = None
     generation_depth: int = Field(default=0)
     critique: Optional[Critique] = None
 
-    def expected_score(self, other_rating: float) -> float:
-        return 1.0 / (1.0 + 10.0 ** ((other_rating - self.elo_rating) / 400.0))
-
-    def update_elo(self, actual_score: float, k_factor: float = 32.0):
-        expected = self.expected_score(self.elo_rating) # Note: Needs opponent rating passed correctly, handled in Engine
-        pass # Actual ELO update is handled in the engine during matchups
 
 class RiddleState(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

@@ -36,6 +36,7 @@ if st.sidebar.button("Analyze Images with Gemini"):
                 mime_type = file.type
                 image_data = file.read()
                 # Run async call synchronously for Streamlit
+                st.session_state.engine.raw_images.append((image_data, mime_type))
                 result = asyncio.run(st.session_state.engine.analyze_image_with_gemini(image_data, mime_type))
                 st.session_state.riddle_state.image_descriptions.append(f"File {file.name}: {result}")
         st.sidebar.success("Images analyzed.")
@@ -58,7 +59,7 @@ with col1:
         st.rerun()
 
     if st.button("🏁 Branch & Iterate Next Loop"):
-        with st.spinner("Selecting top Elo idea to branch..."):
+        with st.spinner("Selecting best scored idea to branch..."):
             st.session_state.engine.branch_next_generation()
         st.success("Branched! Ready for next generation.")
         st.rerun()
@@ -66,10 +67,10 @@ with col1:
     st.markdown("---")
     st.subheader("Current Ideas Leaderboard")
     current_ideas = st.session_state.riddle_state.get_generation_ideas(st.session_state.riddle_state.current_generation)
-    current_ideas.sort(key=lambda x: x.elo_rating, reverse=True)
+    current_ideas.sort(key=lambda x: x.total_score, reverse=True)
 
     for idx, idea in enumerate(current_ideas):
-        with st.expander(f"Idea #{idx+1} - Elo: {idea.elo_rating:.0f}", expanded=(idx==0)):
+        with st.expander(f"Idea #{idx+1} - Total Score: {idea.total_score:.0f}", expanded=(idx==0)):
             st.write(f"**Text:** {idea.text}")
             if idea.critique:
                 st.write(f"**Critic Feedback:** {idea.critique.feedback}")

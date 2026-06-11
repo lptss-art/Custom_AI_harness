@@ -2,7 +2,7 @@
 
 RiddleNexus is a multi-agent, multi-modal Python framework designed specifically to solve complex treasure hunt riddles (involving cryptography, historical deductions, and visual mapping).
 
-Inspired by the architectures of **DeepMind's Co-Scientist (Nature 2026)** and the reasoning trees of **AlphaProof Nexus**, RiddleNexus prevents AI hallucinations by forcing agents to cross-examine ideas in a simulated laboratory environment, ranking them mathematically via an **Elo Tournament**.
+Inspired by the architectures of **DeepMind's Co-Scientist (Nature 2026)** and the reasoning trees of **AlphaProof Nexus**, RiddleNexus prevents AI hallucinations by forcing agents to cross-examine ideas in a simulated laboratory environment, ranking them via a **Multi-Criteria Scoring Grid** and exploring them using **Backtracking Search**.
 
 ## 🧠 How It Works
 
@@ -58,5 +58,5 @@ RiddleNexus is operated via a clean, interactive Streamlit interface.
 3. **Run the Nexus Loop:**
    Interact with the reasoning tree in the UI:
    * **Run Automatic Generation Cycle:** Click this button to launch the automated engine. The UI will stream real-time logs indicating progress as the engine generates, critiques, refines, vectorizes, merges, and scores the ideas.
-   * **Review Leaderboard:** Once the automated cycle completes, expand the current ideas to view their reasoning, critic feedback, and final Elo ranking.
+   * **Review Leaderboard:** Once the automated cycle completes, expand the current ideas to view their reasoning, critic feedback, and final Total Score.
    * **Branch & Iterate Next Loop:** Click this button to manually lock in the top-ranked idea as fact. This advances the depth of reasoning, waiting for you to run the next cycle.
