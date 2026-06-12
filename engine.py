@@ -1,9 +1,11 @@
+import chromadb
+from chromadb.config import Settings
 import asyncio
 import itertools
 import numpy as np
 from typing import List, Tuple
 from config import deepseek_client, gemini_client, K_FACTOR, BASE_ELO
-from models import Idea, Critique, RiddleState
+from models import PisteResolution, Critique, RiddleState
 
 PROPOSER_PROMPT = """You are the Proposer Agent in a multi-agent system solving a treasure hunt riddle.
 Your goal is to generate a unique, highly logical, and concrete hypothesis or reasoning path.
@@ -17,16 +19,16 @@ If you need specific, missing details from the visual clues to evaluate this pro
 Otherwise, you must return a JSON-like structure outlining the weaknesses and a detailed feedback string."""
 
 JUDGE_PROMPT = """You are the Elo Tournament Judge.
-You are evaluating two competing ideas to solve a riddle.
+You are evaluating two competing pistes to solve a riddle.
 Context: {context}
 
-Idea A: {idea_a}
+Idea A: {piste_a}
 Critique of Idea A: {critique_a}
 
-Idea B: {idea_b}
+Idea B: {piste_b}
 Critique of Idea B: {critique_b}
 
-Compare the two ideas based on logic, consistency with clues, the rigor of their critiques, and likelihood of being the correct step.
+Compare the two pistes based on logic, consistency with clues, the rigor of their critiques, and likelihood of being the correct step.
 Output ONLY 'A' if Idea A is better, or 'B' if Idea B is better."""
 
 
@@ -34,9 +36,56 @@ class NexusEngine:
     def __init__(self, state: RiddleState):
         self.state = state
         self.raw_images = []
+        self.chroma_client = chromadb.Client(Settings(is_persistent=False))
+        self.collection = self.chroma_client.create_collection(name="fausses_pistes")
 
-    async def _abstract_idea(self, text: str) -> dict:
-        """Abstracts an idea into a strictly comparable dictionary of facts."""
+
+    def is_fausse_piste_similar(self, text: str) -> bool:
+        """Cartographe: Checks if the generated piste is too similar to a known fausse piste."""
+        if self.collection.count() == 0:
+            return False
+
+        results = self.collection.query(
+            query_texts=[text],
+            n_results=1
+        )
+        if results and results['distances'] and results['distances'][0]:
+            if results['distances'][0][0] < 0.2:
+                return True
+        return False
+
+    def add_fausse_piste_to_memory(self, text: str):
+        import uuid as _uuid
+        self.collection.add(
+            documents=[text],
+            ids=[str(_uuid.uuid4())]
+        )
+
+    def backtrack_piste(self, piste_id: str):
+        """Propagation Récursive pour invalider les enfants."""
+        piste = self.state.pistes.get(piste_id)
+        if not piste:
+            return
+
+        for enfant_id in piste.pistes_enfants:
+            enfant = self.state.pistes.get(enfant_id)
+            if enfant and enfant.statut != "Fausse Piste":
+                enfant.statut = "Bloquée par Parent"
+                enfant.raison_blocage = f"Parent {piste_id} was marked as Fausse Piste."
+                self.backtrack_piste(enfant_id)
+
+    async def run_avocat_du_diable(self, piste: PisteResolution):
+        """Vérificateur Formel (Sécurité). Si le score_elo est très bas, flag Fausse Piste."""
+        if piste.statut == "Fausse Piste":
+            return
+
+        if piste.score_elo < 16.0:  # Less than 40% threshold for critical failure
+            piste.statut = "Fausse Piste"
+            self.add_fausse_piste_to_memory(piste.hypothese_de_depart)
+            self.backtrack_piste(piste.id_piste)
+
+    async def _abstract_piste(self, text: str) -> dict:
+        """Abstracts an piste into a strictly comparable dictionary of facts."""
         try:
             response = await deepseek_client.chat.completions.create(
                 model="deepseek-chat",
@@ -67,40 +116,43 @@ class NexusEngine:
         except Exception as e:
             return f"Error analyzing image: {str(e)}"
 
-    async def _improve_idea(self, idea: Idea, context_str: str) -> Idea:
-        """Asks DeepSeek to improve an idea based on its critique."""
+    async def _improve_piste(self, piste: PisteResolution, context_str: str) -> PisteResolution:
+        """Asks DeepSeek to improve an piste based on its critique."""
         try:
-            critique_text = idea.critique.feedback if idea.critique else "No feedback available."
+            critique_text = piste.analyse_avocat_du_diable.feedback if piste.analyse_avocat_du_diable else "No feedback available."
             response = await deepseek_client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[
                     {"role": "system", "content": "You are the Refiner Agent. Improve the given hypothesis based on the provided critique and context. Return ONLY the improved hypothesis text."},
-                    {"role": "user", "content": f"Context:\n{context_str}\n\nOriginal Hypothesis:\n{idea.text}\n\nCritique:\n{critique_text}\n\nProvide the improved hypothesis:"}
+                    {"role": "user", "content": f"Context:\n{context_str}\n\nOriginal Hypothesis:\n{piste.hypothese_de_depart}\n\nCritique:\n{critique_text}\n\nProvide the improved hypothesis:"}
                 ],
                 temperature=0.7
             )
             improved_text = response.choices[0].message.content.strip()
-            return Idea(text=improved_text, parent_id=idea.parent_id, generation_depth=idea.generation_depth, elo_rating=idea.elo_rating)
+            piste.hypothese_de_depart = improved_text
+            return piste
         except Exception as e:
-            return idea
+            return piste
 
-    async def _merge_ideas(self, idea1: Idea, idea2: Idea, context_str: str) -> Idea:
-        """Asks DeepSeek to synthesize two similar ideas into one unified idea."""
+    async def _merge_pistes(self, piste1: PisteResolution, piste2: PisteResolution, context_str: str) -> PisteResolution:
+        """Asks DeepSeek to synthesize two similar pistes into one unified piste."""
         try:
             response = await deepseek_client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[
                     {"role": "system", "content": "You are the Synthesizer Agent. Merge the two given similar hypotheses into a single, unified, and comprehensive hypothesis based on the provided context. Return ONLY the unified hypothesis text."},
-                    {"role": "user", "content": f"Context:\n{context_str}\n\nHypothesis 1:\n{idea1.text}\n\nHypothesis 2:\n{idea2.text}\n\nProvide the unified hypothesis:"}
+                    {"role": "user", "content": f"Context:\n{context_str}\n\nHypothesis 1:\n{piste1.hypothese_de_depart}\n\nHypothesis 2:\n{piste2.hypothese_de_depart}\n\nProvide the unified hypothesis:"}
                 ],
                 temperature=0.5
             )
             merged_text = response.choices[0].message.content.strip()
-            return Idea(text=merged_text, parent_id=idea1.parent_id, generation_depth=idea1.generation_depth, elo_rating=max(idea1.elo_rating, idea2.elo_rating))
+            piste1.hypothese_de_depart = merged_text
+            piste1.score_elo = max(piste1.score_elo, piste2.score_elo)
+            return piste1
         except Exception as e:
-            return idea1 # Fallback to idea1 if merge fails
+            return piste1 # Fallback to piste1 if merge fails
 
-    async def _propose_single_path(self, context_str: str, parent_id: str = None, depth: int = 0) -> Idea:
+    async def _propose_single_path(self, context_str: str, pistes_parentes_id: str = None, depth: int = 0) -> PisteResolution:
         """Asks DeepSeek to generate one hypothesis."""
         try:
             current_context = f"Context:\n{context_str}\n\nPropose a hypothesis:"
@@ -123,26 +175,30 @@ class NexusEngine:
                         answers.append(ans)
                     current_context += f"\n\n[Visual Query: {query}]\n[Answer: {' | '.join(answers)}]\n"
                 else:
-                    return Idea(text=text, parent_id=parent_id, generation_depth=depth, total_score=0.0)
+                    return PisteResolution(hypothese_de_depart=text, pistes_parentes=[pistes_parentes_id] if pistes_parentes_id else [], generation_depth=depth, score_elo=0.0)
 
-            return Idea(text=text, parent_id=parent_id, generation_depth=depth, total_score=0.0)
+            return PisteResolution(hypothese_de_depart=text, pistes_parentes=[pistes_parentes_id] if pistes_parentes_id else [], generation_depth=depth, score_elo=0.0)
         except Exception as e:
-            return Idea(text=f"Error generating idea: {str(e)}", parent_id=parent_id, generation_depth=depth, total_score=0.0)
+            return PisteResolution(hypothese_de_depart=f"Error generating piste: {str(e)}", pistes_parentes_id=pistes_parentes_id, generation_depth=depth, score_elo=0.0)
 
-    async def _generate_and_refine_idea(self, context_str: str, parent_id: str, depth: int, log_callback) -> Idea:
-        """Proposes an idea and loops to critique and improve it up to 3 times."""
+    async def _generate_and_refine_piste(self, context_str: str, pistes_parentes_id: str, depth: int, log_callback) -> PisteResolution:
+        """Proposes an piste and loops to critique and improve it up to 3 times."""
         if log_callback:
-            log_callback(f"Proposing new idea for generation {depth}...")
-        idea = await self._propose_single_path(context_str, parent_id, depth)
+            log_callback(f"Proposing new piste for generation {depth}...")
+        piste = await self._propose_single_path(context_str, pistes_parentes_id, depth)
+        if piste.pistes_parentes:
+            for pid in piste.pistes_parentes:
+                if pid in self.state.pistes:
+                    self.state.pistes[pid].pistes_enfants.append(piste.id_piste)
 
         for i in range(3):
             if log_callback:
-                log_callback(f"Critiquing idea (Attempt {i+1}/3)...")
-            await self._critique_idea(idea, context_str)
+                log_callback(f"Critiquing piste (Attempt {i+1}/3)...")
+            await self._critique_piste(piste, context_str)
 
             # Re-evaluate multi criteria here to check if it's good enough
-            await self._evaluate_multi_criteria(idea, context_str)
-            total = idea.total_score if idea.total_score else 0.0
+            await self._evaluate_multi_criteria(piste, context_str)
+            total = piste.score_elo if piste.score_elo else 0.0
 
             # If out of 40, 32 is 80%
             if total >= 32.0:
@@ -151,10 +207,10 @@ class NexusEngine:
                 break
 
             if log_callback:
-                log_callback(f"Score {total} < 32. Improving idea...")
-            idea = await self._improve_idea(idea, context_str)
+                log_callback(f"Score {total} < 32. Improving piste...")
+            piste = await self._improve_piste(piste, context_str)
 
-        return idea
+        return piste
 
     async def run_auto_cycle(self, n: int = 5, log_callback=None):
         """Orchestrates the automatic generation, refinement, vector space merging, and evaluation cycle."""
@@ -162,103 +218,113 @@ class NexusEngine:
         if self.state.image_descriptions:
             context_str += "Visual Clues:\n" + "\n".join(self.state.image_descriptions) + "\n"
 
-        parent_id = self.state.top_idea_id
-        if parent_id and parent_id in self.state.ideas:
-            context_str += f"\nPrevious Reasoning (Immutable Checkpoint):\n{self.state.ideas[parent_id].text}\n"
+        pistes_parentes_id = self.state.top_piste_id
+        if pistes_parentes_id and pistes_parentes_id in self.state.pistes:
+            context_str += f"\nPrevious Reasoning (Immutable Checkpoint):\n{self.state.pistes[pistes_parentes_id].hypothese_de_depart}\n"
 
         depth = self.state.current_generation + 1
 
         if log_callback:
             log_callback(f"Starting auto cycle for generation {depth} with {n} parallel paths...")
 
-        # 1. Generate and refine ideas
-        tasks = [self._generate_and_refine_idea(context_str, parent_id, depth, log_callback) for _ in range(n)]
-        raw_ideas = await asyncio.gather(*tasks)
+        # 1. Generate and refine pistes
+        tasks = [self._generate_and_refine_piste(context_str, pistes_parentes_id, depth, log_callback) for _ in range(n)]
+        raw_pistes = await asyncio.gather(*tasks)
 
-        # 2. Abstract ideas for symbolic deduplication
+        # 2. Abstract pistes for symbolic deduplication
         if log_callback:
-            log_callback("Abstracting ideas for exact symbolic comparison...")
-        abstractions = await asyncio.gather(*(self._abstract_idea(idea.text) for idea in raw_ideas))
-        for idea, abs_facts in zip(raw_ideas, abstractions):
-            idea.abstracted_facts = abs_facts
+            log_callback("Abstracting pistes for exact symbolic comparison...")
+        abstractions = await asyncio.gather(*(self._abstract_piste(piste.hypothese_de_depart) for piste in raw_pistes))
+        for piste, abs_facts in zip(raw_pistes, abstractions):
+            piste.abstracted_facts = abs_facts
 
-        # 3. Merge similar ideas based on exact abstraction equality
+        # 3. Merge similar pistes based on exact abstraction equality
         if log_callback:
-            log_callback("Comparing and merging similar ideas...")
-        merged_ideas = []
+            log_callback("Comparing and merging similar pistes...")
+        merged_pistes = []
         skip_indices = set()
 
-        for i in range(len(raw_ideas)):
+        for i in range(len(raw_pistes)):
             if i in skip_indices:
                 continue
 
-            current_idea = raw_ideas[i]
+            current_piste = raw_pistes[i]
             current_abs = abstractions[i]
 
-            for j in range(i + 1, len(raw_ideas)):
+            for j in range(i + 1, len(raw_pistes)):
                 if j in skip_indices:
                     continue
 
                 # Check exact equality of abstracted dictionary
                 if current_abs == abstractions[j]:
                     if log_callback:
-                        log_callback(f"Merging similar ideas (exact symbolic match)...")
-                    current_idea = await self._merge_ideas(current_idea, raw_ideas[j], context_str)
+                        log_callback(f"Merging similar pistes (exact symbolic match)...")
+                    current_piste = await self._merge_pistes(current_piste, raw_pistes[j], context_str)
                     skip_indices.add(j)
-                    # Re-abstract newly merged idea
-                    current_idea.abstracted_facts = await self._abstract_idea(current_idea.text)
-                    current_abs = current_idea.abstracted_facts
+                    # Re-abstract newly merged piste
+                    current_piste.abstracted_facts = await self._abstract_piste(current_piste.hypothese_de_depart)
+                    current_abs = current_piste.abstracted_facts
 
-            merged_ideas.append(current_idea)
+            merged_pistes.append(current_piste)
 
-        # Ensure all final ideas have a critique before evaluation
+        # Ensure all final pistes have a critique before evaluation
         if log_callback:
-            log_callback("Running final critics on merged/unique ideas...")
-        await asyncio.gather(*(self._critique_idea(idea, context_str) for idea in merged_ideas))
+            log_callback("Running final critics on merged/unique pistes...")
+        await asyncio.gather(*(self._critique_piste(piste, context_str) for piste in merged_pistes))
 
-        # Save ideas to state
-        for idea in merged_ideas:
-            self.state.ideas[idea.id] = idea
+        # Save pistes to state
+        for piste in merged_pistes:
+            self.state.pistes[piste.id_piste] = piste
 
         self.state.current_generation = depth
 
         # 4. Evaluate Multi-Criteria Scores
         if log_callback:
-            log_callback(f"Evaluating multi-criteria scores for {len(merged_ideas)} final ideas...")
-        await asyncio.gather(*(self._evaluate_multi_criteria(idea, context_str) for idea in merged_ideas))
+            log_callback(f"Evaluating multi-criteria scores for {len(merged_pistes)} final pistes...")
+        await asyncio.gather(*(self._evaluate_multi_criteria(piste, context_str) for piste in merged_pistes))
+
+        # 5. Avocat du Diable / Cartographe
+        if log_callback:
+            log_callback('Running Avocat du Diable & Cartographe checks...')
+        for piste in merged_pistes:
+            if self.is_fausse_piste_similar(piste.hypothese_de_depart):
+                piste.statut = 'Fausse Piste'
+                piste.raison_blocage = 'Rejetée par le Cartographe: Similar to a known fausse piste.'
+            else:
+                await self.run_avocat_du_diable(piste)
 
         if log_callback:
             log_callback("Auto cycle complete. Ready for next loop.")
 
     async def propose_paths(self, n: int = 5):
-        """Generates N parallel ideas based on the current top idea or base context."""
+        """Generates N parallel pistes based on the current top piste or base context."""
         context_str = f"Riddle: {self.state.description}\n"
         if self.state.image_descriptions:
             context_str += "Visual Clues:\n" + "\n".join(self.state.image_descriptions) + "\n"
 
-        parent_id = self.state.top_idea_id
-        if parent_id and parent_id in self.state.ideas:
-            context_str += f"\nPrevious Reasoning (Immutable Checkpoint):\n{self.state.ideas[parent_id].text}\n"
+        pistes_parentes_id = self.state.top_piste_id
+        if pistes_parentes_id and pistes_parentes_id in self.state.pistes:
+            context_str += f"\nPrevious Reasoning (Immutable Checkpoint):\n{self.state.pistes[pistes_parentes_id].hypothese_de_depart}\n"
 
         depth = self.state.current_generation + 1
 
-        tasks = [self._propose_single_path(context_str, parent_id, depth) for _ in range(n)]
-        new_ideas = await asyncio.gather(*tasks)
+        tasks = [self._propose_single_path(context_str, pistes_parentes_id, depth) for _ in range(n)]
+        new_pistes = await asyncio.gather(*tasks)
 
-        for idea in new_ideas:
-            self.state.ideas[idea.id] = idea
+        for piste in new_pistes:
+            self.state.pistes[piste.id_piste] = piste
 
         self.state.current_generation = depth
 
-    async def _evaluate_multi_criteria(self, idea: Idea, context_str: str):
-        """Asks DeepSeek to evaluate the idea based on multiple specialized criteria."""
+    async def _evaluate_multi_criteria(self, piste: PisteResolution, context_str: str):
+        """Asks DeepSeek to evaluate the piste based on multiple specialized criteria."""
         prompt = f"""You are a panel of expert judges (Cryptography, History, Geography, Logic).
 Evaluate the following hypothesis based on the context.
 Context:
 {context_str}
 
 Hypothesis:
-{idea.text}
+{piste.hypothese_de_depart}
 
 Return a JSON object with scores from 0 to 10 for each of these keys:
 - cryptography: The correctness of any cipher or decoding logic.
@@ -277,33 +343,33 @@ Return a JSON object with scores from 0 to 10 for each of these keys:
             scores = json.loads(response.choices[0].message.content.strip())
             from models import ScoreGrid, Critique
 
-            if not idea.critique:
-                idea.critique = Critique(feedback="Evaluated multi-criteria.", score_grid=ScoreGrid())
+            if not piste.analyse_avocat_du_diable:
+                piste.analyse_avocat_du_diable = Critique(feedback="Evaluated multi-criteria.", score_grid=ScoreGrid())
 
-            idea.critique.score_grid = ScoreGrid(
+            piste.analyse_avocat_du_diable.score_grid = ScoreGrid(
                 cryptography=int(scores.get("cryptography", 0)),
                 history=int(scores.get("history", 0)),
                 geography=int(scores.get("geography", 0)),
                 logic=int(scores.get("logic", 0))
             )
-            idea.total_score = float(
-                idea.critique.score_grid.cryptography +
-                idea.critique.score_grid.history +
-                idea.critique.score_grid.geography +
-                idea.critique.score_grid.logic
+            piste.score_elo = float(
+                piste.analyse_avocat_du_diable.score_grid.cryptography +
+                piste.analyse_avocat_du_diable.score_grid.history +
+                piste.analyse_avocat_du_diable.score_grid.geography +
+                piste.analyse_avocat_du_diable.score_grid.logic
             )
         except Exception as e:
             from models import ScoreGrid, Critique
-            if not idea.critique:
-                idea.critique = Critique(feedback=f"Evaluation failed: {str(e)}", score_grid=ScoreGrid())
+            if not piste.analyse_avocat_du_diable:
+                piste.analyse_avocat_du_diable = Critique(feedback=f"Evaluation failed: {str(e)}", score_grid=ScoreGrid())
             else:
-                idea.critique.score_grid = ScoreGrid()
-            idea.total_score = 0.0
+                piste.analyse_avocat_du_diable.score_grid = ScoreGrid()
+            piste.score_elo = 0.0
 
-    async def _critique_idea(self, idea: Idea, context_str: str):
+    async def _critique_piste(self, piste: PisteResolution, context_str: str):
         """Asks DeepSeek to act as a Critic."""
         try:
-            current_context = f"Context:\n{context_str}\n\nHypothesis:\n{idea.text}\n\nCritique it."
+            current_context = f"Context:\n{context_str}\n\nHypothesis:\n{piste.hypothese_de_depart}\n\nCritique it."
             for _ in range(3):
                 # When looping for visual queries, we temporarily disable JSON format to allow free-text query.
                 response = await deepseek_client.chat.completions.create(
@@ -340,42 +406,42 @@ Return a JSON object with scores from 0 to 10 for each of these keys:
             feedback_json = json.loads(final_response.choices[0].message.content.strip())
 
             from models import Critique
-            idea.critique = Critique(
+            piste.analyse_avocat_du_diable = Critique(
                 weaknesses=feedback_json.get("weaknesses", []),
                 feedback=feedback_json.get("feedback", str(feedback_json))
             )
         except Exception as e:
             from models import Critique
-            idea.critique = Critique(feedback=f"Critique failed: {str(e)}")
+            piste.analyse_avocat_du_diable = Critique(feedback=f"Critique failed: {str(e)}")
 
     async def run_critiques(self):
-        """Runs critiques on all ideas of the current generation."""
-        current_ideas = self.state.get_generation_ideas(self.state.current_generation)
+        """Runs critiques on all pistes of the current generation."""
+        current_pistes = self.state.get_generation_pistes(self.state.current_generation)
         context_str = f"Riddle: {self.state.description}\n"
         if self.state.image_descriptions:
             context_str += "Visual Clues:\n" + "\n".join(self.state.image_descriptions) + "\n"
 
-        tasks = [self._critique_idea(idea, context_str) for idea in current_ideas]
+        tasks = [self._critique_piste(piste, context_str) for piste in current_pistes]
         await asyncio.gather(*tasks)
 
 
     def branch_next_generation(self):
         """Selects the best open node (leaf) across all generations to become the checkpoint, implementing backtracking."""
-        if not self.state.ideas:
+        if not self.state.pistes:
             return None
 
         # Find all parent IDs
-        parent_ids = {idea.parent_id for idea in self.state.ideas.values() if idea.parent_id is not None}
+        pistes_parentes_ids = {(piste.pistes_parentes[0] if piste.pistes_parentes else None) for piste in self.state.pistes.values() if (piste.pistes_parentes[0] if piste.pistes_parentes else None) is not None}
 
-        # A leaf node is an idea whose ID is not in parent_ids
-        leaf_nodes = [idea for idea in self.state.ideas.values() if idea.id not in parent_ids]
+        # A leaf node is an piste whose ID is not in pistes_parentes_ids
+        leaf_nodes = [piste for piste in self.state.pistes.values() if piste.id_piste not in pistes_parentes_ids and piste.statut not in ["Fausse Piste", "Bloquée par Parent"]]
 
         if not leaf_nodes:
             return None
 
-        # Sort descending by total_score
-        leaf_nodes.sort(key=lambda x: x.total_score, reverse=True)
-        top_idea = leaf_nodes[0]
-        self.state.top_idea_id = top_idea.id
-        self.state.current_generation = top_idea.generation_depth
-        return top_idea
+        # Sort descending by score_elo
+        leaf_nodes.sort(key=lambda x: x.score_elo, reverse=True)
+        top_piste = leaf_nodes[0]
+        self.state.top_piste_id = top_piste.id_piste
+        self.state.current_generation = top_piste.generation_depth
+        return top_piste
