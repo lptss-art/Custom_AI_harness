@@ -179,7 +179,7 @@ class NexusEngine:
 
             return PisteResolution(hypothese_de_depart=text, pistes_parentes=[pistes_parentes_id] if pistes_parentes_id else [], generation_depth=depth, score_elo=0.0)
         except Exception as e:
-            return PisteResolution(hypothese_de_depart=f"Error generating piste: {str(e)}", pistes_parentes_id=pistes_parentes_id, generation_depth=depth, score_elo=0.0)
+            return PisteResolution(hypothese_de_depart=f"Error generating piste: {str(e)}", pistes_parentes=[pistes_parentes_id] if pistes_parentes_id else [], generation_depth=depth, score_elo=0.0)
 
     async def _generate_and_refine_piste(self, context_str: str, pistes_parentes_id: str, depth: int, log_callback) -> PisteResolution:
         """Proposes an piste and loops to critique and improve it up to 3 times."""
