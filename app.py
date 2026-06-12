@@ -59,21 +59,21 @@ with col1:
         st.rerun()
 
     if st.button("🏁 Branch & Iterate Next Loop"):
-        with st.spinner("Selecting best scored idea to branch..."):
+        with st.spinner("Selecting best scored piste to branch..."):
             st.session_state.engine.branch_next_generation()
         st.success("Branched! Ready for next generation.")
         st.rerun()
 
     st.markdown("---")
-    st.subheader("Current Ideas Leaderboard")
-    current_ideas = st.session_state.riddle_state.get_generation_ideas(st.session_state.riddle_state.current_generation)
-    current_ideas.sort(key=lambda x: x.total_score, reverse=True)
+    st.subheader("Current Pistes Leaderboard")
+    current_pistes = st.session_state.riddle_state.get_generation_pistes(st.session_state.riddle_state.current_generation)
+    current_pistes.sort(key=lambda x: x.total_score, reverse=True)
 
-    for idx, idea in enumerate(current_ideas):
-        with st.expander(f"Idea #{idx+1} - Total Score: {idea.total_score:.0f}", expanded=(idx==0)):
-            st.write(f"**Text:** {idea.text}")
-            if idea.critique:
-                st.write(f"**Critic Feedback:** {idea.critique.feedback}")
+    for idx, piste in enumerate(current_pistes):
+        with st.expander(f"Piste #{idx+1} - Total Score: {piste.score_elo:.0f}", expanded=(idx==0)):
+            st.write(f"**Text:** {piste.hypothese_de_depart}")
+            if piste.analyse_avocat_du_diable:
+                st.write(f"**Critic Feedback:** {piste.analyse_avocat_du_diable.feedback}")
 
 with col2:
     st.subheader("Context State")
@@ -84,6 +84,6 @@ with col2:
     for desc in st.session_state.riddle_state.image_descriptions:
         st.caption(desc)
 
-    if st.session_state.riddle_state.top_idea_id:
+    if st.session_state.riddle_state.top_piste_id:
         st.write("**Current Baseline Checkpoint:**")
-        st.success(st.session_state.riddle_state.ideas[st.session_state.riddle_state.top_idea_id].text)
+        st.success(st.session_state.riddle_state.pistes[st.session_state.riddle_state.top_piste_id].hypothese_de_depart)
