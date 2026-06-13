@@ -355,7 +355,42 @@ Hypothesis:
             if code_match:
                 script_code = code_match.group(1)
                 piste.protocole_de_test = f"Reasoning:\n{content}\n\nScript:\n{script_code}"
-                piste.resultat_du_test = "Execution disabled for security (requires sandbox environment)."
+
+                # Execute the python script safely using the sandbox wrapper
+                import subprocess
+                import tempfile
+                import os
+                import sys
+
+                try:
+                    # Write script to a temporary file
+                    fd, temp_path = tempfile.mkstemp(suffix=".py")
+                    with os.fdopen(fd, 'w') as f:
+                        f.write(script_code)
+
+                    # Ensure sandbox wrapper exists
+                    wrapper_path = os.path.join(os.path.dirname(__file__), "sandbox_wrapper.py")
+
+                    # Run the script with a 10 second timeout (wrapper has 5s CPU limit)
+                    result = subprocess.run(
+                        [sys.executable, wrapper_path, temp_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+
+                    if result.returncode == 0:
+                        piste.resultat_du_test = f"Execution successful.\nStdout:\n{result.stdout.strip()}"
+                    else:
+                        piste.resultat_du_test = f"Execution failed (Code {result.returncode}).\nStdout:\n{result.stdout.strip()}\nStderr:\n{result.stderr.strip()}"
+                except subprocess.TimeoutExpired:
+                    piste.resultat_du_test = "Execution timed out (Wall clock limit)."
+                except Exception as ex:
+                    piste.resultat_du_test = f"Execution error: {str(ex)}"
+                finally:
+                    # Clean up temp file
+                    if 'temp_path' in locals() and os.path.exists(temp_path):
+                        os.remove(temp_path)
             else:
                 piste.protocole_de_test = f"Logical Deduction:\n{content}"
                 piste.resultat_du_test = "No script generated."
@@ -510,7 +545,7 @@ Return a JSON object with scores from 0 to 10 for each of these keys:
         if not self.state.pistes:
             return []
 
-        pistes_parentes_ids = {(piste.pistes_parentes[0] if piste.pistes_parentes else None) for piste in self.state.pistes.values() if (piste.pistes_parentes[0] if piste.pistes_parentes else None) is not None}
+        pistes_parentes_ids = {pid for piste in self.state.pistes.values() if piste.pistes_parentes for pid in piste.pistes_parentes}
         leaf_nodes = [piste for piste in self.state.pistes.values() if piste.id_piste not in pistes_parentes_ids and piste.statut not in ["Fausse Piste", "Bloquée par Parent"]]
 
         if not leaf_nodes:
