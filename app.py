@@ -106,21 +106,70 @@ with col1:
     current_pistes.sort(key=lambda x: x.score_elo, reverse=True)
 
     for idx, piste in enumerate(current_pistes):
-        with st.expander(f"Piste #{idx+1} - Total Score: {piste.score_elo:.0f}", expanded=(idx==0)):
-            st.write(f"**Text:** {piste.hypothese_de_depart}")
+        # 1. Status Badges
+        status_icon = "⚪"
+        if piste.statut == "Active": status_icon = "🟡"
+        elif piste.statut == "Fausse Piste": status_icon = "🔴"
+        elif piste.statut == "Validée": status_icon = "🟢"
+        elif piste.statut == "En attente": status_icon = "🟢"
 
-            if piste.protocole_de_test and piste.protocole_de_test != "Aucun":
-                st.write("**⚙️ Solver Protocol:**")
-                st.code(piste.protocole_de_test, language="markdown")
+        expander_title = f"{status_icon} Piste #{idx+1} | Score: {piste.score_elo:.0f} | {piste.id_piste}"
 
-            if piste.resultat_du_test:
-                st.write("**⚙️ Solver Result:**")
-                st.text(piste.resultat_du_test)
+        with st.expander(expander_title, expanded=(idx==0)):
+            # 2. Genealogy / Parents
+            if piste.pistes_parentes:
+                st.caption(f"🧬 **Parents :** {' × '.join(piste.pistes_parentes)}")
+            else:
+                st.caption("🧬 **Parents :** Nouvelle génération (Racine)")
 
-            if piste.analyse_avocat_du_diable:
-                st.write(f"**Critic Feedback:** {piste.analyse_avocat_du_diable.feedback}")
-            st.write("**Full JSON Data:**")
-            st.json(piste.model_dump())
+            # 3. Énigme Réfractée (Simple Output)
+            if getattr(piste, "output_simple", None):
+                st.info(f"**✨ Énigme Réfractée (Output Simple) :**\n\n{piste.output_simple}")
+
+            tab1, tab2, tab3, tab4 = st.tabs(["💡 Logique", "⚙️ Exécution", "⚖️ Critique & Scores", "📄 JSON"])
+
+            with tab1:
+                st.write(f"**Hypothèse :** {piste.hypothese_de_depart}")
+
+            with tab2:
+                if piste.protocole_de_test and piste.protocole_de_test != "Aucun":
+                    st.write("Vérification de l'hypothèse via script Python...")
+                    if piste.resultat_du_test:
+                        if "Error" in piste.resultat_du_test or "disabled" in piste.resultat_du_test:
+                            st.warning(f"➔ {piste.resultat_du_test.splitlines()[0]}")
+                        else:
+                            st.success(f"➔ Succès : {piste.resultat_du_test.splitlines()[-1] if piste.resultat_du_test.splitlines() else 'OK'}")
+
+                    with st.expander("Voir le code source et le protocole complet"):
+                        st.code(piste.protocole_de_test, language="markdown")
+                        if piste.resultat_du_test:
+                            st.text(piste.resultat_du_test)
+                else:
+                    st.write("Aucun protocole d'exécution généré.")
+
+            with tab3:
+                if piste.analyse_avocat_du_diable:
+                    st.write(f"**Feedback Général :** {piste.analyse_avocat_du_diable.feedback}")
+                    if piste.analyse_avocat_du_diable.score_grid:
+                        scores = piste.analyse_avocat_du_diable.score_grid
+
+                        def draw_stars(score: int, max_score: int = 10):
+                            # score is out of 10. We draw 5 stars.
+                            stars_count = round((score / max_score) * 5)
+                            return "⭐" * stars_count + "❌" * (5 - stars_count)
+
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            st.write(f"🔐 Crypto : {draw_stars(scores.cryptography)} ({scores.cryptography}/10)")
+                            st.write(f"📜 Histoire : {draw_stars(scores.history)} ({scores.history}/10)")
+                        with col_b:
+                            st.write(f"🗺️ Géo : {draw_stars(scores.geography)} ({scores.geography}/10)")
+                            st.write(f"🧠 Logique : {draw_stars(scores.logic)} ({scores.logic}/10)")
+                else:
+                    st.write("Pas de critique disponible.")
+
+            with tab4:
+                st.json(piste.model_dump())
 
 with col2:
     st.subheader("Context State")

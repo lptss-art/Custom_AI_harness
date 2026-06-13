@@ -12,30 +12,23 @@ Le système est articulé autour de plusieurs rôles d'agents principaux, orches
 * **Sorties :** Découpage en briques élémentaires (Pit Stops) et gestion des dépendances.
 * **Outil clé :** Registre des "Faits Établis" (Mémoire partagée).
 
-### 2. L'Agent Générateur d'Idées (Créatif)
-* **Mission :** Briser la pensée linéaire et générer une grande diversité d'hypothèses.
-* **Système Prompt :**
-  > "You are the Proposer Agent in a multi-agent system solving a treasure hunt riddle.
-  > Your goal is to generate a unique, highly logical, and concrete hypothesis or reasoning path.
-  > Do not hallucinate. Base your reasoning STRICTLY on the given context, visual descriptions, and the parent reasoning path (if any).
-  > If you need specific, missing details from the visual clues, you may output exactly 'VISUAL_QUERY: <your question about the image>' as your response. The system will look at the image and provide the answer.
-  > Otherwise, provide only the reasoning text. Be direct and concise."
+### 2. L'Agent Générateur d'Idées (Créatif & Multi-Prompt)
+* **Mission :** Briser la pensée linéaire et générer une grande diversité d'hypothèses en s'appuyant sur plusieurs approches (Logique, Thématique, Latérale).
+* **Contrainte de format :** Afin de garantir des itérations claires et cumulatives, chaque hypothèse générée **doit tenir en une seule phrase courte et concise**.
+* **Systèmes Prompts :**
+  L'agent tourne selon une approche *Round-Robin* sur les prompts suivants :
+  - **Logical Proposer :** "Generate a unique, highly logical, and concrete hypothesis based STRICTLY on deductive reasoning..."
+  - **Thematic Proposer :** "Generate a hypothesis that deeply aligns with the narrative, history, and theme of the riddle..."
+  - **Lateral-Thinking Proposer :** "Generate an improbable, out-of-the-box, or lateral thinking hypothesis..."
 
 ### 3. Le Solver de Piste (L'Exécuteur)
-* **Mission :** Tester de façon concrète les hypothèses générées à l'aide d'un processus de raisonnement (Chain of Thought).
+* **Mission :** Tester de façon concrète les hypothèses générées à l'aide d'un processus de raisonnement (Chain of Thought) et fournir un résultat exploitable (`SIMPLE_OUTPUT`).
 * **Place dans le cycle :** Générateur d'idées ──► Cartographe (ChromaDB) ──► SOLVER DE PISTE ──► Avocat du Diable ──► Arbitre.
 * **Process Interne (CoT & Outils) :**
   Pour ne pas dériver, cet agent utilise une *Chain of Thought* (CoT) interne.
   1. **Réflexion (CoT) :** "Pour tester cette hypothèse, je dois d'abord extraire le texte crypté de la page 4, puis appliquer l'algorithme."
-  2. **Appel d'outils (Scripting) :** Il génère un script Python pour valider de façon computationnelle son hypothèse (ex. casser un code, mathématiques).
-  3. **Résultat :** Il produit un livrable stocké dans `protocole_de_test` et `resultat_du_test`.
-* **Système Prompt :**
-  > "You are the Solver Agent (L'Exécuteur).
-  > Your goal is to test and verify the given hypothesis using a Chain of Thought.
-  > First, explain your reasoning (CoT) on how to test this hypothesis.
-  > Then, if a computational check is needed (e.g., deciphering text, math, logic validation), provide a single valid Python script enclosed in ```python ... ``` blocks.
-  > The script must print its final result to standard output. Do not use external APIs or complex dependencies unless absolutely necessary.
-  > If no script is needed, provide your logical deduction."
+  2. **Appel d'outils (Scripting) :** Il génère un script Python pour valider de façon computationnelle son hypothèse (ex. casser un code, mathématiques). *Note : L'exécution directe est désactivée par défaut pour des raisons de sécurité (sandbox requise).*
+  3. **Résultat (`SIMPLE_OUTPUT`) :** Il extrait et produit un livrable final stocké dans la propriété `output_simple` de la piste (par exemple, le texte décrypté). Ce résultat est automatiquement réinjecté dans le contexte pour l'itération suivante, permettant l'enchaînement de tâches complexes (ex: double déchiffrage).
 
 ### 4. L'Avocat du Diable (Vérificateur & Critique)
 * **Mission :** Éliminer impitoyablement les hallucinations et les failles logiques. Il scrute chaque hypothèse. Si le score total d'une hypothèse est jugé trop bas (score < 16.0 / 40.0), il marque la piste comme "Fausse Piste", ce qui déclenche le mécanisme de Backtracking.
@@ -67,12 +60,16 @@ Le système est articulé autour de plusieurs rôles d'agents principaux, orches
 
 Chaque piste est enregistrée et tracée selon un modèle de données Pydantic strict (`PisteResolution`) qui embarque à la fois l'idée d'origine (`hypothese_de_depart`), le verdict de l'Avocat du Diable (`analyse_avocat_du_diable` via l'objet `Critique`), et l'évaluation de l'Arbitre (`score_elo` via `ScoreGrid`).
 
-**Mécanisme de Backtracking (Gestion des Fausses Pistes) :**
+**Stratégie de Branchement & Backtracking :**
 Lorsqu'un nœud mène à une conclusion impossible (ex: score très faible par l'Arbitre) :
 1. **Drapeau d'Échec :** L'Avocat du Diable passe le statut à "Fausse Piste".
 2. **Propagation Récursive :** La méthode `backtrack_piste` parcourt la liste des enfants. Toutes les sous-pistes descendantes voient leur statut modifié en "Bloquée par Parent".
 3. **Mise à jour de la Mémoire :** L'hypothèse échouée est envoyée à ChromaDB (Cartographe) pour bloquer définitivement cette branche sémantique.
-4. **Sélection du Prochain Nœud :** La méthode `branch_next_generation` ignore toute feuille ayant les statuts "Fausse Piste" ou "Bloquée par Parent", et reprend l'exploration à partir du nœud encore ouvert le mieux noté.
+
+Afin de ne pas s'enfermer dans un tunnel de raisonnement, **le système ne génère pas 100% de ses nouvelles idées à partir d'une seule et même piste.** Lors d'un nouveau cycle, le système sélectionne un mix diversifié de pistes parentes :
+- La meilleure piste actuelle.
+- Des "runners-up" (autres pistes actives avec de bons scores).
+- De potentielles nouvelles approches (retour à la racine).
 
 
 ## 🛠️ Installation
