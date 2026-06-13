@@ -283,7 +283,7 @@ class NexusEngine:
                 if current_abs == abstractions[j]:
                     if log_callback:
                         log_callback(f"Merging similar pistes (exact symbolic match)...")
-                    current_piste = await self._merge_pistes(current_piste, raw_pistes[j], context_str)
+                    current_piste = await self._merge_pistes(current_piste, raw_pistes[j], base_context_str)
                     skip_indices.add(j)
                     # Re-abstract newly merged piste
                     current_piste.abstracted_facts = await self._abstract_piste(current_piste.hypothese_de_depart)
@@ -294,7 +294,7 @@ class NexusEngine:
         # Ensure all final pistes have a critique before evaluation
         if log_callback:
             log_callback("Running final critics on merged/unique pistes...")
-        await asyncio.gather(*(self._critique_piste(piste, context_str) for piste in merged_pistes))
+        await asyncio.gather(*(self._critique_piste(piste, base_context_str) for piste in merged_pistes))
 
         # Save pistes to state
         for piste in merged_pistes:
@@ -305,12 +305,12 @@ class NexusEngine:
         # 4. Evaluate Multi-Criteria Scores
         if log_callback:
             log_callback(f"Evaluating multi-criteria scores for {len(merged_pistes)} final pistes...")
-        await asyncio.gather(*(self._evaluate_multi_criteria(piste, context_str) for piste in merged_pistes))
+        await asyncio.gather(*(self._evaluate_multi_criteria(piste, base_context_str) for piste in merged_pistes))
 
         # 5. Solver de Piste (L'Exécuteur)
         if log_callback:
             log_callback("Running Solver de Piste (L'Exécuteur) to generate and execute test protocols...")
-        await asyncio.gather(*(self._run_solver(piste, context_str, log_callback) for piste in merged_pistes))
+        await asyncio.gather(*(self._run_solver(piste, base_context_str, log_callback) for piste in merged_pistes))
 
         # 6. Avocat du Diable / Cartographe
         if log_callback:
