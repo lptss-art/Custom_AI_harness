@@ -3,10 +3,9 @@ from typing import List, Optional, Dict
 import uuid
 
 class ScoreGrid(BaseModel):
-    cryptography: int = Field(default=0)
-    history: int = Field(default=0)
-    geography: int = Field(default=0)
-    logic: int = Field(default=0)
+    advancement: int = Field(default=0, description="Does it seem to advance the riddle?")
+    coherence: int = Field(default=0, description="Does it seem coherent?")
+    plausibility: int = Field(default=0, description="Does it seem plausible?")
 
 class Critique(BaseModel):
     weaknesses: List[str] = Field(default_factory=list, description="List of identified weaknesses in the idea.")

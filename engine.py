@@ -91,7 +91,7 @@ class NexusEngine:
         if piste.statut == "Fausse Piste":
             return
 
-        if piste.score_elo < 16.0:  # Less than 40% threshold for critical failure
+        if piste.score_elo < 12.0:  # Less than 40% threshold for critical failure (3 criteria max 30)
             piste.statut = "Fausse Piste"
             self.add_fausse_piste_to_memory(piste.hypothese_de_depart)
             self.backtrack_piste(piste.id_piste)
@@ -459,7 +459,7 @@ Hypothesis:
 
     async def _evaluate_multi_criteria(self, piste: PisteResolution, context_str: str):
         """Asks DeepSeek to evaluate the piste based on multiple specialized criteria."""
-        prompt = f"""You are a panel of expert judges (Cryptography, History, Geography, Logic).
+        prompt = f"""You are a panel of expert judges.
 Evaluate the following hypothesis based on the context.
 Context:
 {context_str}
@@ -468,10 +468,9 @@ Hypothesis:
 {piste.hypothese_de_depart}
 
 Return a JSON object with scores from 0 to 10 for each of these keys:
-- cryptography: The correctness of any cipher or decoding logic.
-- history: The accuracy of historical references.
-- geography: The spatial logic and map alignment.
-- logic: The overall consistency and deductive reasoning.
+- advancement: Does it seem to advance the riddle?
+- coherence: Does it seem coherent?
+- plausibility: Does it seem plausible?
 """
         try:
             response = await deepseek_client.chat.completions.create(
@@ -488,16 +487,14 @@ Return a JSON object with scores from 0 to 10 for each of these keys:
                 piste.analyse_avocat_du_diable = Critique(feedback="Evaluated multi-criteria.", score_grid=ScoreGrid())
 
             piste.analyse_avocat_du_diable.score_grid = ScoreGrid(
-                cryptography=int(scores.get("cryptography", 0)),
-                history=int(scores.get("history", 0)),
-                geography=int(scores.get("geography", 0)),
-                logic=int(scores.get("logic", 0))
+                advancement=int(scores.get("advancement", 0)),
+                coherence=int(scores.get("coherence", 0)),
+                plausibility=int(scores.get("plausibility", 0))
             )
             piste.score_elo = float(
-                piste.analyse_avocat_du_diable.score_grid.cryptography +
-                piste.analyse_avocat_du_diable.score_grid.history +
-                piste.analyse_avocat_du_diable.score_grid.geography +
-                piste.analyse_avocat_du_diable.score_grid.logic
+                piste.analyse_avocat_du_diable.score_grid.advancement +
+                piste.analyse_avocat_du_diable.score_grid.coherence +
+                piste.analyse_avocat_du_diable.score_grid.plausibility
             )
         except Exception as e:
             from models import ScoreGrid, Critique
