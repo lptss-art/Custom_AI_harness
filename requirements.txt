@@ -4,3 +4,4 @@ google-genai
 pydantic
 python-dotenv
 chromadb
+graphviz==0.20.3
