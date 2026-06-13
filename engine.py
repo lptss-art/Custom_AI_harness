@@ -307,20 +307,24 @@ class NexusEngine:
             log_callback(f"Evaluating multi-criteria scores for {len(merged_pistes)} final pistes...")
         await asyncio.gather(*(self._evaluate_multi_criteria(piste, base_context_str) for piste in merged_pistes))
 
-        # 5. Solver de Piste (L'Exécuteur)
+        # 5. Avocat du Diable / Cartographe (Early Rejection)
         if log_callback:
-            log_callback("Running Solver de Piste (L'Exécuteur) to generate and execute test protocols...")
-        await asyncio.gather(*(self._run_solver(piste, base_context_str, log_callback) for piste in merged_pistes))
-
-        # 6. Avocat du Diable / Cartographe
-        if log_callback:
-            log_callback('Running Avocat du Diable & Cartographe checks...')
+            log_callback('Running Cartographe & Avocat du Diable checks to filter bad tracks before execution...')
         for piste in merged_pistes:
             if self.is_fausse_piste_similar(piste.hypothese_de_depart):
                 piste.statut = 'Fausse Piste'
                 piste.raison_blocage = 'Rejetée par le Cartographe: Similar to a known fausse piste.'
             else:
                 await self.run_avocat_du_diable(piste)
+
+        # Filter active pistes
+        active_pistes = [p for p in merged_pistes if p.statut not in ['Fausse Piste', 'Bloquée par Parent']]
+
+        # 6. Solver de Piste (L'Exécuteur)
+        if active_pistes and log_callback:
+            log_callback(f"Running Solver de Piste (L'Exécuteur) on {len(active_pistes)} valid tracks...")
+        if active_pistes:
+            await asyncio.gather(*(self._run_solver(piste, base_context_str, log_callback) for piste in active_pistes))
 
         if log_callback:
             log_callback("Auto cycle complete. Ready for next loop.")
@@ -340,27 +344,40 @@ Hypothesis:
 {piste.hypothese_de_depart}
 """
         try:
-            response = await deepseek_client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": "You are a Python executor agent."}, {"role": "user", "content": solver_prompt}],
-                temperature=0.2
-            )
-            content = response.choices[0].message.content.strip()
+            messages = [
+                {"role": "system", "content": "You are a Python executor agent."},
+                {"role": "user", "content": solver_prompt}
+            ]
 
-            # Extract python code if present
+            max_retries = 2
+            attempts = 0
+
             import re
+            import subprocess
+            import tempfile
+            import os
+            import sys
 
-            code_match = re.search(r'```python\s*(.*?)\s*```', content, re.DOTALL)
+            while attempts <= max_retries:
+                attempts += 1
 
-            if code_match:
+                response = await deepseek_client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=messages,
+                    temperature=0.2
+                )
+                content = response.choices[0].message.content.strip()
+
+                # Extract python code if present
+                code_match = re.search(r'```python\s*(.*?)\s*```', content, re.DOTALL)
+
+                if not code_match:
+                    piste.protocole_de_test = f"Logical Deduction:\n{content}"
+                    piste.resultat_du_test = "No script generated."
+                    break
+
                 script_code = code_match.group(1)
-                piste.protocole_de_test = f"Reasoning:\n{content}\n\nScript:\n{script_code}"
-
-                # Execute the python script safely using the sandbox wrapper
-                import subprocess
-                import tempfile
-                import os
-                import sys
+                piste.protocole_de_test = f"Reasoning (Attempt {attempts}):\n{content}\n\nScript:\n{script_code}"
 
                 try:
                     # Write script to a temporary file
@@ -368,10 +385,9 @@ Hypothesis:
                     with os.fdopen(fd, 'w') as f:
                         f.write(script_code)
 
-                    # Ensure sandbox wrapper exists
                     wrapper_path = os.path.join(os.path.dirname(__file__), "sandbox_wrapper.py")
 
-                    # Run the script with a 10 second timeout (wrapper has 5s CPU limit)
+                    # Run the script
                     result = subprocess.run(
                         [sys.executable, wrapper_path, temp_path],
                         capture_output=True,
@@ -381,21 +397,30 @@ Hypothesis:
 
                     if result.returncode == 0:
                         piste.resultat_du_test = f"Execution successful.\nStdout:\n{result.stdout.strip()}"
+                        break  # Success, exit the retry loop
                     else:
-                        piste.resultat_du_test = f"Execution failed (Code {result.returncode}).\nStdout:\n{result.stdout.strip()}\nStderr:\n{result.stderr.strip()}"
+                        error_msg = f"Execution failed (Code {result.returncode}).\nStdout:\n{result.stdout.strip()}\nStderr:\n{result.stderr.strip()}"
+                        piste.resultat_du_test = error_msg
+
+                        if attempts <= max_retries:
+                            # Feed the error back to the LLM to ask for a fix
+                            messages.append({"role": "assistant", "content": content})
+                            messages.append({"role": "user", "content": f"Your script failed with the following error:\n{error_msg}\n\nPlease fix the script, rewrite it completely within ```python ``` blocks, and remember to include the SIMPLE_OUTPUT: line."})
+                            if log_callback:
+                                log_callback(f"Script execution failed for piste {piste.id_piste[:5]}. Retrying (Attempt {attempts}/{max_retries})...")
+
                 except subprocess.TimeoutExpired:
                     piste.resultat_du_test = "Execution timed out (Wall clock limit)."
+                    break # Don't retry timeouts
                 except Exception as ex:
                     piste.resultat_du_test = f"Execution error: {str(ex)}"
+                    break
                 finally:
                     # Clean up temp file
                     if 'temp_path' in locals() and os.path.exists(temp_path):
                         os.remove(temp_path)
-            else:
-                piste.protocole_de_test = f"Logical Deduction:\n{content}"
-                piste.resultat_du_test = "No script generated."
 
-            # Extract simple output
+            # Extract simple output (from the last response content)
             simple_output_match = re.search(r'SIMPLE_OUTPUT:\s*(.*)', content, re.IGNORECASE | re.DOTALL)
             if simple_output_match:
                 piste.output_simple = simple_output_match.group(1).strip()
