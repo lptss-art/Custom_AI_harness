@@ -24,10 +24,11 @@ If you need specific, missing details from the visual clues, you may output exac
 Otherwise, provide ONLY your hypothesis. IMPORTANT: Your hypothesis MUST be exactly ONE SINGLE, short and concise sentence. Do not add any explanations."""
 ]
 
-CRITIC_PROMPT = """You are the Critic Agent. Your job is to rigorously cross-examine the given hypothesis.
-Look for logical flaws, historical inaccuracies, cryptographical errors, and inconsistencies with the provided visual hints.
+CRITIC_PROMPT = """You are the Critic Agent (L'Avocat du Diable). Your job is to rigorously cross-examine the given hypothesis and enumerate very critically all the flaws in the reasoning chain to eliminate hallucinations.
+You must specifically point out any logical errors, historical inaccuracies, cryptographical mistakes, or inconsistencies with the visual hints.
+You DO NOT decide if it is a 'false track' on your own, but you MUST strongly indicate if there is a fundamental reasoning error.
 If you need specific, missing details from the visual clues to evaluate this properly, you may output exactly "VISUAL_QUERY: <your question about the image>" anywhere in your response.
-Otherwise, you must return a JSON-like structure outlining the weaknesses and a detailed feedback string."""
+Otherwise, you must return a JSON structure outlining the weaknesses (list of strings) and a detailed feedback string."""
 
 JUDGE_PROMPT = """You are the Elo Tournament Judge.
 You are evaluating two competing pistes to solve a riddle.
@@ -335,7 +336,7 @@ class NexusEngine:
 Your goal is to test and verify the given hypothesis using a Chain of Thought.
 First, explain your reasoning (CoT) on how to test this hypothesis.
 Then, if a computational check is needed (e.g., deciphering text, math, logic validation), provide a single valid Python script enclosed in ```python ... ``` blocks.
-Finally, and most importantly, you MUST provide a "SIMPLE_OUTPUT:" line at the very end of your response containing ONLY the deciphered text, key findings, or modified riddle that should be passed on to the next iteration.
+Finally, and most importantly, you MUST provide a "SIMPLE_OUTPUT:" line at the very end of your response. This simple output MUST indicate a concrete solution or finding that is directly linked to the results of the tools/script you executed (e.g., the exact deciphered text, a confirmed coordinate, or a mathematical result).
 
 Context:
 {context_str}
