@@ -326,9 +326,6 @@ Hypothesis:
 
             # Extract python code if present
             import re
-            import subprocess
-            import tempfile
-            import os
 
             code_match = re.search(r'```python\s*(.*?)\s*```', content, re.DOTALL)
 
