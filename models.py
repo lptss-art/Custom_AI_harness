@@ -22,6 +22,7 @@ class PisteResolution(BaseModel):
     hypothese_de_depart: str = Field(..., description="The reasoning path or hypothesis.")
     protocole_de_test: str = Field(default="Aucun", description="Script Python ou méthode de vérification")
     resultat_du_test: Optional[str] = None
+    output_simple: Optional[str] = Field(default=None, description="Résultat réutilisable de la piste (ex: texte décrypté).")
     probleme_rencontre: Optional[str] = None
     solution_proposee: Optional[str] = None
     analyse_avocat_du_diable: Optional[Critique] = None

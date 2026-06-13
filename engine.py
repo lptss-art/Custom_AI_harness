@@ -7,11 +7,22 @@ from typing import List, Tuple
 from config import deepseek_client, gemini_client, K_FACTOR, BASE_ELO
 from models import PisteResolution, Critique, RiddleState
 
-PROPOSER_PROMPT = """You are the Proposer Agent in a multi-agent system solving a treasure hunt riddle.
-Your goal is to generate a unique, highly logical, and concrete hypothesis or reasoning path.
-Do not hallucinate. Base your reasoning STRICTLY on the given context, visual descriptions, and the parent reasoning path (if any).
-If you need specific, missing details from the visual clues, you may output exactly "VISUAL_QUERY: <your question about the image>" as your response. The system will look at the image and provide the answer.
-Otherwise, provide only the reasoning text. Be direct and concise."""
+PROPOSER_PROMPTS = [
+    """You are the Logical Proposer Agent in a multi-agent system solving a treasure hunt riddle.
+Your goal is to generate a unique, highly logical, and concrete hypothesis based STRICTLY on deductive reasoning from the given clues.
+If you need specific, missing details from the visual clues, you may output exactly "VISUAL_QUERY: <your question about the image>".
+Otherwise, provide ONLY your hypothesis. IMPORTANT: Your hypothesis MUST be exactly ONE SINGLE, short and concise sentence. Do not add any explanations.""",
+
+    """You are the Thematic Proposer Agent in a multi-agent system solving a treasure hunt riddle.
+Your goal is to generate a hypothesis that deeply aligns with the narrative, history, and theme of the riddle. Focus on lore and thematic connections.
+If you need specific, missing details from the visual clues, you may output exactly "VISUAL_QUERY: <your question about the image>".
+Otherwise, provide ONLY your hypothesis. IMPORTANT: Your hypothesis MUST be exactly ONE SINGLE, short and concise sentence. Do not add any explanations.""",
+
+    """You are the Lateral-Thinking Proposer Agent in a multi-agent system solving a treasure hunt riddle.
+Your goal is to generate an improbable, out-of-the-box, or lateral thinking hypothesis that challenges obvious assumptions.
+If you need specific, missing details from the visual clues, you may output exactly "VISUAL_QUERY: <your question about the image>".
+Otherwise, provide ONLY your hypothesis. IMPORTANT: Your hypothesis MUST be exactly ONE SINGLE, short and concise sentence. Do not add any explanations."""
+]
 
 CRITIC_PROMPT = """You are the Critic Agent. Your job is to rigorously cross-examine the given hypothesis.
 Look for logical flaws, historical inaccuracies, cryptographical errors, and inconsistencies with the provided visual hints.
@@ -152,18 +163,18 @@ class NexusEngine:
         except Exception as e:
             return piste1 # Fallback to piste1 if merge fails
 
-    async def _propose_single_path(self, context_str: str, pistes_parentes_id: str = None, depth: int = 0) -> PisteResolution:
-        """Asks DeepSeek to generate one hypothesis."""
+    async def _propose_single_path(self, context_str: str, pistes_parentes_id: str = None, depth: int = 0, prompt_template: str = PROPOSER_PROMPTS[0]) -> PisteResolution:
+        """Asks DeepSeek to generate one hypothesis using a specific persona prompt."""
         try:
-            current_context = f"Context:\n{context_str}\n\nPropose a hypothesis:"
+            current_context = f"Context:\n{context_str}\n\nPropose a hypothesis (remember, ONE single sentence):"
             for _ in range(3): # Allow up to 3 visual queries per proposal
                 response = await deepseek_client.chat.completions.create(
                     model="deepseek-chat",
                     messages=[
-                        {"role": "system", "content": PROPOSER_PROMPT},
+                        {"role": "system", "content": prompt_template},
                         {"role": "user", "content": current_context}
                     ],
-                    temperature=0.7
+                    temperature=0.8
                 )
                 text = response.choices[0].message.content.strip()
 
@@ -181,11 +192,11 @@ class NexusEngine:
         except Exception as e:
             return PisteResolution(hypothese_de_depart=f"Error generating piste: {str(e)}", pistes_parentes=[pistes_parentes_id] if pistes_parentes_id else [], generation_depth=depth, score_elo=0.0)
 
-    async def _generate_and_refine_piste(self, context_str: str, pistes_parentes_id: str, depth: int, log_callback) -> PisteResolution:
+    async def _generate_and_refine_piste(self, context_str: str, pistes_parentes_id: str, depth: int, log_callback, prompt_template: str) -> PisteResolution:
         """Proposes an piste and loops to critique and improve it up to 3 times."""
         if log_callback:
             log_callback(f"Proposing new piste for generation {depth}...")
-        piste = await self._propose_single_path(context_str, pistes_parentes_id, depth)
+        piste = await self._propose_single_path(context_str, pistes_parentes_id, depth, prompt_template)
         if piste.pistes_parentes:
             for pid in piste.pistes_parentes:
                 if pid in self.state.pistes:
@@ -214,21 +225,34 @@ class NexusEngine:
 
     async def run_auto_cycle(self, n: int = 5, log_callback=None):
         """Orchestrates the automatic generation, refinement, vector space merging, and evaluation cycle."""
-        context_str = f"Riddle: {self.state.description}\n"
+        base_context_str = f"Riddle: {self.state.description}\n"
         if self.state.image_descriptions:
-            context_str += "Visual Clues:\n" + "\n".join(self.state.image_descriptions) + "\n"
-
-        pistes_parentes_id = self.state.top_piste_id
-        if pistes_parentes_id and pistes_parentes_id in self.state.pistes:
-            context_str += f"\nPrevious Reasoning (Immutable Checkpoint):\n{self.state.pistes[pistes_parentes_id].hypothese_de_depart}\n"
+            base_context_str += "Visual Clues:\n" + "\n".join(self.state.image_descriptions) + "\n"
 
         depth = self.state.current_generation + 1
 
         if log_callback:
-            log_callback(f"Starting auto cycle for generation {depth} with {n} parallel paths...")
+            log_callback(f"Starting auto cycle for generation {depth} with {n} parallel paths using diverse prompts and mixed parents...")
 
-        # 1. Generate and refine pistes
-        tasks = [self._generate_and_refine_piste(context_str, pistes_parentes_id, depth, log_callback) for _ in range(n)]
+        # Select a mix of parent pistes to branch from, not just the top one
+        parent_candidates = self._get_mixed_parent_candidates()
+
+        # 1. Generate and refine pistes using a round-robin of diverse prompts and selected parents
+        tasks = []
+        for i in range(n):
+            prompt_template = PROPOSER_PROMPTS[i % len(PROPOSER_PROMPTS)]
+            parent_piste = parent_candidates[i % len(parent_candidates)] if parent_candidates else None
+            parent_id = parent_piste.id_piste if parent_piste else None
+
+            # Build specific context for this generation, including simple output if available
+            specific_context = base_context_str
+            if parent_piste:
+                specific_context += f"\nPrevious Reasoning (Parent Checkpoint):\n{parent_piste.hypothese_de_depart}\n"
+                if parent_piste.output_simple:
+                    specific_context += f"Result/Modified Riddle from Parent:\n{parent_piste.output_simple}\n"
+
+            tasks.append(self._generate_and_refine_piste(specific_context, parent_id, depth, log_callback, prompt_template))
+
         raw_pistes = await asyncio.gather(*tasks)
 
         # 2. Abstract pistes for symbolic deduplication
@@ -302,13 +326,12 @@ class NexusEngine:
             log_callback("Auto cycle complete. Ready for next loop.")
 
     async def _run_solver(self, piste: PisteResolution, context_str: str, log_callback=None):
-        """Asks DeepSeek to act as a Solver, generate a Python test script, and execute it."""
+        """Asks DeepSeek to act as a Solver, generate a Python test script, and extract a simple output."""
         solver_prompt = f"""You are the Solver Agent (L'Exécuteur).
 Your goal is to test and verify the given hypothesis using a Chain of Thought.
 First, explain your reasoning (CoT) on how to test this hypothesis.
 Then, if a computational check is needed (e.g., deciphering text, math, logic validation), provide a single valid Python script enclosed in ```python ... ``` blocks.
-The script must print its final result to standard output. Do not use external APIs or complex dependencies unless absolutely necessary.
-If no script is needed, provide your logical deduction.
+Finally, and most importantly, you MUST provide a "SIMPLE_OUTPUT:" line at the very end of your response containing ONLY the deciphered text, key findings, or modified riddle that should be passed on to the next iteration.
 
 Context:
 {context_str}
@@ -335,11 +358,19 @@ Hypothesis:
                 piste.resultat_du_test = "Execution disabled for security (requires sandbox environment)."
             else:
                 piste.protocole_de_test = f"Logical Deduction:\n{content}"
-                piste.resultat_du_test = "No script executed."
+                piste.resultat_du_test = "No script generated."
+
+            # Extract simple output
+            simple_output_match = re.search(r'SIMPLE_OUTPUT:\s*(.*)', content, re.IGNORECASE | re.DOTALL)
+            if simple_output_match:
+                piste.output_simple = simple_output_match.group(1).strip()
+            else:
+                piste.output_simple = None
 
         except Exception as e:
             piste.protocole_de_test = f"Solver failed: {str(e)}"
             piste.resultat_du_test = "Error"
+            piste.output_simple = None
 
     async def propose_paths(self, n: int = 5):
         """Generates N parallel pistes based on the current top piste or base context."""
@@ -353,7 +384,11 @@ Hypothesis:
 
         depth = self.state.current_generation + 1
 
-        tasks = [self._propose_single_path(context_str, pistes_parentes_id, depth) for _ in range(n)]
+        tasks = []
+        for i in range(n):
+            prompt_template = PROPOSER_PROMPTS[i % len(PROPOSER_PROMPTS)]
+            tasks.append(self._propose_single_path(context_str, pistes_parentes_id, depth, prompt_template))
+
         new_pistes = await asyncio.gather(*tasks)
 
         for piste in new_pistes:
@@ -469,6 +504,29 @@ Return a JSON object with scores from 0 to 10 for each of these keys:
         tasks = [self._critique_piste(piste, context_str) for piste in current_pistes]
         await asyncio.gather(*tasks)
 
+
+    def _get_mixed_parent_candidates(self) -> List[PisteResolution]:
+        """Returns a diverse mix of up to 3 parent pistes: the best one, a random active one, and potentially a blank slate."""
+        if not self.state.pistes:
+            return []
+
+        pistes_parentes_ids = {(piste.pistes_parentes[0] if piste.pistes_parentes else None) for piste in self.state.pistes.values() if (piste.pistes_parentes[0] if piste.pistes_parentes else None) is not None}
+        leaf_nodes = [piste for piste in self.state.pistes.values() if piste.id_piste not in pistes_parentes_ids and piste.statut not in ["Fausse Piste", "Bloquée par Parent"]]
+
+        if not leaf_nodes:
+            return []
+
+        leaf_nodes.sort(key=lambda x: x.score_elo, reverse=True)
+
+        candidates = [leaf_nodes[0]] # Always include the best
+
+        if len(leaf_nodes) > 1:
+            import random
+            # Include a random runner-up
+            candidates.append(random.choice(leaf_nodes[1:]))
+
+        # Potentially add a 'None' (fresh start) by adding nothing here, and letting the loop handle it
+        return candidates
 
     def branch_next_generation(self):
         """Selects the best open node (leaf) across all generations to become the checkpoint, implementing backtracking."""
