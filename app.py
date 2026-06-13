@@ -67,7 +67,7 @@ with col1:
     st.markdown("---")
     st.subheader("Current Pistes Leaderboard")
     current_pistes = st.session_state.riddle_state.get_generation_pistes(st.session_state.riddle_state.current_generation)
-    current_pistes.sort(key=lambda x: x.total_score, reverse=True)
+    current_pistes.sort(key=lambda x: x.score_elo, reverse=True)
 
     for idx, piste in enumerate(current_pistes):
         with st.expander(f"Piste #{idx+1} - Total Score: {piste.score_elo:.0f}", expanded=(idx==0)):
