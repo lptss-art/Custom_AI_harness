@@ -1,5 +1,6 @@
 import streamlit as st
 import asyncio
+import graphviz
 from models import RiddleState
 from engine import NexusEngine
 
@@ -50,11 +51,13 @@ with col1:
     st.subheader("Nexus Reasoning Tree")
     st.write(f"**Current Generation:** {st.session_state.riddle_state.current_generation}")
 
+    num_pistes = st.number_input("Number of Pistes per Cycle", min_value=1, max_value=20, value=5)
+
     if st.button("▶️ Run Automatic Generation Cycle"):
         with st.status("Running Nexus Cycle...", expanded=True) as status:
             def update_status(msg):
                 status.write(msg)
-            asyncio.run(st.session_state.engine.run_auto_cycle(n=5, log_callback=update_status))
+            asyncio.run(st.session_state.engine.run_auto_cycle(n=num_pistes, log_callback=update_status))
             status.update(label="Cycle Complete!", state="complete", expanded=False)
         st.rerun()
 
@@ -63,6 +66,39 @@ with col1:
             st.session_state.engine.branch_next_generation()
         st.success("Branched! Ready for next generation.")
         st.rerun()
+
+    st.markdown("---")
+    st.subheader("S.M.A.R.E. Architecture Flow")
+    st.info("🔄 Superviseur ➔ 💡 Générateur d'Idées ➔ 🗺️ Cartographe (Deduplication) ➔ ⚖️ Avocat du Diable (Critique) ➔ 🏆 Arbitre (Evaluation)")
+
+    st.markdown("---")
+    st.subheader("Visual Reasoning Tree")
+
+    if st.session_state.riddle_state.pistes:
+        graph = graphviz.Digraph(engine='dot')
+        graph.attr(rankdir='TB')
+        for piste_id, piste in st.session_state.riddle_state.pistes.items():
+            node_label = f"{piste.id_piste}\\nGen: {piste.generation_depth}\\nScore: {piste.score_elo:.1f}\\nStatus: {piste.statut}"
+            color = "white"
+            if piste.statut == "Fausse Piste":
+                color = "lightpink"
+            elif piste.statut == "Bloquée par Parent":
+                color = "lightgrey"
+            elif piste.id_piste == st.session_state.riddle_state.top_piste_id:
+                color = "lightgreen"
+            elif piste.statut == "Active":
+                color = "lightblue"
+
+            graph.node(piste.id_piste, label=node_label, style='filled', fillcolor=color, shape='box')
+
+            if piste.pistes_parentes:
+                for parent_id in piste.pistes_parentes:
+                    if parent_id in st.session_state.riddle_state.pistes:
+                        graph.edge(parent_id, piste.id_piste)
+
+        st.graphviz_chart(graph)
+    else:
+        st.info("No pistes generated yet.")
 
     st.markdown("---")
     st.subheader("Current Pistes Leaderboard")
@@ -74,6 +110,8 @@ with col1:
             st.write(f"**Text:** {piste.hypothese_de_depart}")
             if piste.analyse_avocat_du_diable:
                 st.write(f"**Critic Feedback:** {piste.analyse_avocat_du_diable.feedback}")
+            st.write("**Full JSON Data:**")
+            st.json(piste.model_dump())
 
 with col2:
     st.subheader("Context State")
@@ -87,3 +125,8 @@ with col2:
     if st.session_state.riddle_state.top_piste_id:
         st.write("**Current Baseline Checkpoint:**")
         st.success(st.session_state.riddle_state.pistes[st.session_state.riddle_state.top_piste_id].hypothese_de_depart)
+
+    st.markdown("---")
+    st.subheader("Global State JSON")
+    with st.expander("View Global RiddleState JSON"):
+        st.json(st.session_state.riddle_state.model_dump(exclude={"pistes"}))
