@@ -37,7 +37,7 @@ class NexusEngine:
         self.state = state
         self.raw_images = []
         self.chroma_client = chromadb.Client(Settings(is_persistent=False))
-        self.collection = self.chroma_client.create_collection(name="fausses_pistes")
+        self.collection = self.chroma_client.get_or_create_collection(name="fausses_pistes")
 
 
     def is_fausse_piste_similar(self, text: str) -> bool:
