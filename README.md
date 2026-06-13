@@ -21,14 +21,15 @@ Le système est articulé autour de plusieurs rôles d'agents principaux, orches
   - **Thematic Proposer :** "Generate a hypothesis that deeply aligns with the narrative, history, and theme of the riddle..."
   - **Lateral-Thinking Proposer :** "Generate an improbable, out-of-the-box, or lateral thinking hypothesis..."
 
-### 3. Le Solver de Piste (L'Exécuteur)
-* **Mission :** Tester de façon concrète les hypothèses générées à l'aide d'un processus de raisonnement (Chain of Thought) et fournir un résultat exploitable (`SIMPLE_OUTPUT`).
+### 3. Le Solver de Piste (L'Exécuteur & Sandbox)
+* **Mission :** Tester de façon concrète les hypothèses générées à l'aide d'un processus de raisonnement (Chain of Thought), exécuter du code, et fournir un résultat exploitable (`SIMPLE_OUTPUT`).
 * **Place dans le cycle :** Générateur d'idées ──► Cartographe (ChromaDB) ──► SOLVER DE PISTE ──► Avocat du Diable ──► Arbitre.
-* **Process Interne (CoT & Outils) :**
-  Pour ne pas dériver, cet agent utilise une *Chain of Thought* (CoT) interne.
+* **Process Interne (CoT, Scripting & Sandbox) :**
+  Pour ne pas dériver, cet agent utilise une *Chain of Thought* (CoT) interne couplée à un environnement d'exécution contraint.
   1. **Réflexion (CoT) :** "Pour tester cette hypothèse, je dois d'abord extraire le texte crypté de la page 4, puis appliquer l'algorithme."
-  2. **Appel d'outils (Scripting) :** Il génère un script Python pour valider de façon computationnelle son hypothèse (ex. casser un code, mathématiques). *Note : L'exécution directe est désactivée par défaut pour des raisons de sécurité (sandbox requise).*
-  3. **Résultat (`SIMPLE_OUTPUT`) :** Il extrait et produit un livrable final stocké dans la propriété `output_simple` de la piste (par exemple, le texte décrypté). Ce résultat est automatiquement réinjecté dans le contexte pour l'itération suivante, permettant l'enchaînement de tâches complexes (ex: double déchiffrage).
+  2. **Appel d'outils (Scripting & Sandbox) :** L'agent génère un script Python pour valider de façon computationnelle son hypothèse (ex. casser un code, mathématiques).
+     * **Sécurité & Sandbox :** L'exécution du code généré par l'IA se fait via `subprocess.run` encapsulé par un script utilitaire (`sandbox_wrapper.py`). Ce wrapper tente d'appliquer des limites strictes (5 secondes de temps CPU, 256 MB de RAM via le module `resource` sous Unix, et la falsification des variables d'environnement réseau) afin de prévenir les boucles infinies ou les fuites de mémoire. *Attention : Sous Windows, ces limites systèmes ne sont pas applicables et l'exécution se fait uniquement avec un Timeout standard (10s).*
+  3. **Résultat (`SIMPLE_OUTPUT`) :** L'agent parse la sortie standard du script (STDOUT) pour produire un livrable final stocké dans la propriété `output_simple` de la piste (par exemple, le texte décrypté). Ce résultat est automatiquement réinjecté dans le contexte pour l'itération suivante, permettant l'enchaînement de tâches complexes (ex: double déchiffrage).
 
 ### 4. L'Avocat du Diable (Vérificateur & Critique)
 * **Mission :** Éliminer impitoyablement les hallucinations et les failles logiques. Il scrute chaque hypothèse. Si le score total d'une hypothèse est jugé trop bas (score < 16.0 / 40.0), il marque la piste comme "Fausse Piste", ce qui déclenche le mécanisme de Backtracking.
