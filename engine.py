@@ -24,10 +24,11 @@ If you need specific, missing details from the visual clues, you may output exac
 Otherwise, provide ONLY your hypothesis. IMPORTANT: Your hypothesis MUST be exactly ONE SINGLE, short and concise sentence. Do not add any explanations."""
 ]
 
-CRITIC_PROMPT = """You are the Critic Agent. Your job is to rigorously cross-examine the given hypothesis.
-Look for logical flaws, historical inaccuracies, cryptographical errors, and inconsistencies with the provided visual hints.
+CRITIC_PROMPT = """You are the Critic Agent (L'Avocat du Diable). Your job is to rigorously cross-examine the given hypothesis and enumerate very critically all the flaws in the reasoning chain to eliminate hallucinations.
+You must specifically point out any logical errors, historical inaccuracies, cryptographical mistakes, or inconsistencies with the visual hints.
+You DO NOT decide if it is a 'false track' on your own, but you MUST strongly indicate if there is a fundamental reasoning error.
 If you need specific, missing details from the visual clues to evaluate this properly, you may output exactly "VISUAL_QUERY: <your question about the image>" anywhere in your response.
-Otherwise, you must return a JSON-like structure outlining the weaknesses and a detailed feedback string."""
+Otherwise, you must return a JSON structure outlining the weaknesses (list of strings) and a detailed feedback string."""
 
 JUDGE_PROMPT = """You are the Elo Tournament Judge.
 You are evaluating two competing pistes to solve a riddle.
@@ -90,7 +91,7 @@ class NexusEngine:
         if piste.statut == "Fausse Piste":
             return
 
-        if piste.score_elo < 16.0:  # Less than 40% threshold for critical failure
+        if piste.score_elo < 12.0:  # Less than 40% threshold for critical failure (3 criteria max 30)
             piste.statut = "Fausse Piste"
             self.add_fausse_piste_to_memory(piste.hypothese_de_depart)
             self.backtrack_piste(piste.id_piste)
@@ -307,20 +308,24 @@ class NexusEngine:
             log_callback(f"Evaluating multi-criteria scores for {len(merged_pistes)} final pistes...")
         await asyncio.gather(*(self._evaluate_multi_criteria(piste, base_context_str) for piste in merged_pistes))
 
-        # 5. Solver de Piste (L'Exécuteur)
+        # 5. Avocat du Diable / Cartographe (Early Rejection)
         if log_callback:
-            log_callback("Running Solver de Piste (L'Exécuteur) to generate and execute test protocols...")
-        await asyncio.gather(*(self._run_solver(piste, base_context_str, log_callback) for piste in merged_pistes))
-
-        # 6. Avocat du Diable / Cartographe
-        if log_callback:
-            log_callback('Running Avocat du Diable & Cartographe checks...')
+            log_callback('Running Cartographe & Avocat du Diable checks to filter bad tracks before execution...')
         for piste in merged_pistes:
             if self.is_fausse_piste_similar(piste.hypothese_de_depart):
                 piste.statut = 'Fausse Piste'
                 piste.raison_blocage = 'Rejetée par le Cartographe: Similar to a known fausse piste.'
             else:
                 await self.run_avocat_du_diable(piste)
+
+        # Filter active pistes
+        active_pistes = [p for p in merged_pistes if p.statut not in ['Fausse Piste', 'Bloquée par Parent']]
+
+        # 6. Solver de Piste (L'Exécuteur)
+        if active_pistes and log_callback:
+            log_callback(f"Running Solver de Piste (L'Exécuteur) on {len(active_pistes)} valid tracks...")
+        if active_pistes:
+            await asyncio.gather(*(self._run_solver(piste, base_context_str, log_callback) for piste in active_pistes))
 
         if log_callback:
             log_callback("Auto cycle complete. Ready for next loop.")
@@ -331,7 +336,7 @@ class NexusEngine:
 Your goal is to test and verify the given hypothesis using a Chain of Thought.
 First, explain your reasoning (CoT) on how to test this hypothesis.
 Then, if a computational check is needed (e.g., deciphering text, math, logic validation), provide a single valid Python script enclosed in ```python ... ``` blocks.
-Finally, and most importantly, you MUST provide a "SIMPLE_OUTPUT:" line at the very end of your response containing ONLY the deciphered text, key findings, or modified riddle that should be passed on to the next iteration.
+Finally, and most importantly, you MUST provide a "SIMPLE_OUTPUT:" line at the very end of your response. This simple output MUST indicate a concrete solution or finding that is directly linked to the results of the tools/script you executed (e.g., the exact deciphered text, a confirmed coordinate, or a mathematical result).
 
 Context:
 {context_str}
@@ -340,27 +345,40 @@ Hypothesis:
 {piste.hypothese_de_depart}
 """
         try:
-            response = await deepseek_client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "system", "content": "You are a Python executor agent."}, {"role": "user", "content": solver_prompt}],
-                temperature=0.2
-            )
-            content = response.choices[0].message.content.strip()
+            messages = [
+                {"role": "system", "content": "You are a Python executor agent."},
+                {"role": "user", "content": solver_prompt}
+            ]
 
-            # Extract python code if present
+            max_retries = 2
+            attempts = 0
+
             import re
+            import subprocess
+            import tempfile
+            import os
+            import sys
 
-            code_match = re.search(r'```python\s*(.*?)\s*```', content, re.DOTALL)
+            while attempts <= max_retries:
+                attempts += 1
 
-            if code_match:
+                response = await deepseek_client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=messages,
+                    temperature=0.2
+                )
+                content = response.choices[0].message.content.strip()
+
+                # Extract python code if present
+                code_match = re.search(r'```python\s*(.*?)\s*```', content, re.DOTALL)
+
+                if not code_match:
+                    piste.protocole_de_test = f"Logical Deduction:\n{content}"
+                    piste.resultat_du_test = "No script generated."
+                    break
+
                 script_code = code_match.group(1)
-                piste.protocole_de_test = f"Reasoning:\n{content}\n\nScript:\n{script_code}"
-
-                # Execute the python script safely using the sandbox wrapper
-                import subprocess
-                import tempfile
-                import os
-                import sys
+                piste.protocole_de_test = f"Reasoning (Attempt {attempts}):\n{content}\n\nScript:\n{script_code}"
 
                 try:
                     # Write script to a temporary file
@@ -368,10 +386,9 @@ Hypothesis:
                     with os.fdopen(fd, 'w') as f:
                         f.write(script_code)
 
-                    # Ensure sandbox wrapper exists
                     wrapper_path = os.path.join(os.path.dirname(__file__), "sandbox_wrapper.py")
 
-                    # Run the script with a 10 second timeout (wrapper has 5s CPU limit)
+                    # Run the script
                     result = subprocess.run(
                         [sys.executable, wrapper_path, temp_path],
                         capture_output=True,
@@ -381,21 +398,30 @@ Hypothesis:
 
                     if result.returncode == 0:
                         piste.resultat_du_test = f"Execution successful.\nStdout:\n{result.stdout.strip()}"
+                        break  # Success, exit the retry loop
                     else:
-                        piste.resultat_du_test = f"Execution failed (Code {result.returncode}).\nStdout:\n{result.stdout.strip()}\nStderr:\n{result.stderr.strip()}"
+                        error_msg = f"Execution failed (Code {result.returncode}).\nStdout:\n{result.stdout.strip()}\nStderr:\n{result.stderr.strip()}"
+                        piste.resultat_du_test = error_msg
+
+                        if attempts <= max_retries:
+                            # Feed the error back to the LLM to ask for a fix
+                            messages.append({"role": "assistant", "content": content})
+                            messages.append({"role": "user", "content": f"Your script failed with the following error:\n{error_msg}\n\nPlease fix the script, rewrite it completely within ```python ``` blocks, and remember to include the SIMPLE_OUTPUT: line."})
+                            if log_callback:
+                                log_callback(f"Script execution failed for piste {piste.id_piste[:5]}. Retrying (Attempt {attempts}/{max_retries})...")
+
                 except subprocess.TimeoutExpired:
                     piste.resultat_du_test = "Execution timed out (Wall clock limit)."
+                    break # Don't retry timeouts
                 except Exception as ex:
                     piste.resultat_du_test = f"Execution error: {str(ex)}"
+                    break
                 finally:
                     # Clean up temp file
                     if 'temp_path' in locals() and os.path.exists(temp_path):
                         os.remove(temp_path)
-            else:
-                piste.protocole_de_test = f"Logical Deduction:\n{content}"
-                piste.resultat_du_test = "No script generated."
 
-            # Extract simple output
+            # Extract simple output (from the last response content)
             simple_output_match = re.search(r'SIMPLE_OUTPUT:\s*(.*)', content, re.IGNORECASE | re.DOTALL)
             if simple_output_match:
                 piste.output_simple = simple_output_match.group(1).strip()
@@ -433,7 +459,7 @@ Hypothesis:
 
     async def _evaluate_multi_criteria(self, piste: PisteResolution, context_str: str):
         """Asks DeepSeek to evaluate the piste based on multiple specialized criteria."""
-        prompt = f"""You are a panel of expert judges (Cryptography, History, Geography, Logic).
+        prompt = f"""You are a panel of expert judges.
 Evaluate the following hypothesis based on the context.
 Context:
 {context_str}
@@ -442,10 +468,9 @@ Hypothesis:
 {piste.hypothese_de_depart}
 
 Return a JSON object with scores from 0 to 10 for each of these keys:
-- cryptography: The correctness of any cipher or decoding logic.
-- history: The accuracy of historical references.
-- geography: The spatial logic and map alignment.
-- logic: The overall consistency and deductive reasoning.
+- advancement: Does it seem to advance the riddle?
+- coherence: Does it seem coherent?
+- plausibility: Does it seem plausible?
 """
         try:
             response = await deepseek_client.chat.completions.create(
@@ -462,16 +487,14 @@ Return a JSON object with scores from 0 to 10 for each of these keys:
                 piste.analyse_avocat_du_diable = Critique(feedback="Evaluated multi-criteria.", score_grid=ScoreGrid())
 
             piste.analyse_avocat_du_diable.score_grid = ScoreGrid(
-                cryptography=int(scores.get("cryptography", 0)),
-                history=int(scores.get("history", 0)),
-                geography=int(scores.get("geography", 0)),
-                logic=int(scores.get("logic", 0))
+                advancement=int(scores.get("advancement", 0)),
+                coherence=int(scores.get("coherence", 0)),
+                plausibility=int(scores.get("plausibility", 0))
             )
             piste.score_elo = float(
-                piste.analyse_avocat_du_diable.score_grid.cryptography +
-                piste.analyse_avocat_du_diable.score_grid.history +
-                piste.analyse_avocat_du_diable.score_grid.geography +
-                piste.analyse_avocat_du_diable.score_grid.logic
+                piste.analyse_avocat_du_diable.score_grid.advancement +
+                piste.analyse_avocat_du_diable.score_grid.coherence +
+                piste.analyse_avocat_du_diable.score_grid.plausibility
             )
         except Exception as e:
             from models import ScoreGrid, Critique

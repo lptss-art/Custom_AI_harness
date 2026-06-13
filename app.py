@@ -160,11 +160,10 @@ with col1:
 
                         col_a, col_b = st.columns(2)
                         with col_a:
-                            st.write(f"🔐 Crypto : {draw_stars(scores.cryptography)} ({scores.cryptography}/10)")
-                            st.write(f"📜 Histoire : {draw_stars(scores.history)} ({scores.history}/10)")
+                            st.write(f"🚀 Avancement : {draw_stars(scores.advancement)} ({scores.advancement}/10)")
+                            st.write(f"🧩 Cohérence : {draw_stars(scores.coherence)} ({scores.coherence}/10)")
                         with col_b:
-                            st.write(f"🗺️ Géo : {draw_stars(scores.geography)} ({scores.geography}/10)")
-                            st.write(f"🧠 Logique : {draw_stars(scores.logic)} ({scores.logic}/10)")
+                            st.write(f"✅ Plausibilité : {draw_stars(scores.plausibility)} ({scores.plausibility}/10)")
                 else:
                     st.write("Pas de critique disponible.")
 
