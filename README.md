@@ -32,29 +32,27 @@ Le système est articulé autour de plusieurs rôles d'agents principaux, orches
   3. **Résultat (`SIMPLE_OUTPUT`) :** L'agent parse la sortie standard du script (STDOUT) pour produire un livrable final stocké dans la propriété `output_simple` de la piste (par exemple, le texte décrypté). Ce résultat est automatiquement réinjecté dans le contexte pour l'itération suivante, permettant l'enchaînement de tâches complexes (ex: double déchiffrage).
 
 ### 4. L'Avocat du Diable (Vérificateur & Critique)
-* **Mission :** Éliminer impitoyablement les hallucinations et les failles logiques. Il scrute chaque hypothèse. Si le score total d'une hypothèse est jugé trop bas (score < 16.0 / 40.0), il marque la piste comme "Fausse Piste", ce qui déclenche le mécanisme de Backtracking.
+* **Mission :** Éliminer impitoyablement les hallucinations et les failles logiques. Il scrute chaque hypothèse. Si le score total d'une hypothèse est jugé trop bas par l'Arbitre (score < 12.0 / 30.0), l'Avocat marque la piste comme "Fausse Piste", ce qui déclenche le mécanisme de Backtracking.
 * **Système Prompt :**
-  > "You are the Critic Agent. Your job is to rigorously cross-examine the given hypothesis.
-  > Look for logical flaws, historical inaccuracies, cryptographical errors, and inconsistencies with the provided visual hints.
-  > If you need specific, missing details from the visual clues to evaluate this properly, you may output exactly 'VISUAL_QUERY: <your question about the image>' anywhere in your response.
-  > Otherwise, you must return a JSON-like structure outlining the weaknesses and a detailed feedback string."
+  > "You are the Critic Agent (L'Avocat du Diable). Your job is to rigorously cross-examine the given hypothesis and enumerate very critically all the flaws in the reasoning chain to eliminate hallucinations.
+  > You must specifically point out any logical errors, historical inaccuracies, cryptographical mistakes, or inconsistencies with the visual hints..."
 
 ### 5. L'Agent Cartographe (Mémoire Vectorielle)
-* **Mission :** Éviter la redondance et le surcalcul en s'assurant qu'une fausse piste n'est pas explorée deux fois.
+* **Mission :** Éviter la redondance et le surcalcul en s'assurant qu'une fausse piste n'est pas explorée deux fois. **(S'exécute avant le Solver pour économiser du temps de calcul).**
 * **Fonctionnement :** Compare chaque nouvelle idée avec la base de données (ChromaDB) des fausses pistes déjà rejetées via des similarités de plongement (embeddings). Si la distance cosinus est trop faible (ex: < 0.2), l'idée est immédiatement jetée.
 * **Système Prompt de Déduplication Symbolique (L'Abstracteur) :**
   > "You are the Abstractor Agent. Extract strict facts from the hypothesis. Return ONLY a JSON object with keys: 'location', 'method', 'key'."
 
 ### 6. L'Arbitre des Pistes (Évaluateur Multi-Critères)
-* **Mission :** Noter de manière déterministe l'hypothèse pour décider de son sort.
+* **Mission :** Noter de manière déterministe l'hypothèse (sur un total de 30 points) pour évaluer sa viabilité, et ce **avant** que le Solver ne perde du temps à écrire des scripts pour de mauvaises idées.
+* **Contexte fourni :** Afin de ne pas noyer l'agent sous l'information et biaiser son jugement, le Juge ne reçoit **que le texte de l'énigme, les indices visuels extraits, et la phrase de l'hypothèse à tester**. Il ne reçoit pas l'historique complet des exécutions.
 * **Système Prompt :**
-  > "You are a panel of expert judges (Cryptography, History, Geography, Logic).
+  > "You are a panel of expert judges.
   > Evaluate the following hypothesis based on the context.
   > Return a JSON object with scores from 0 to 10 for each of these keys:
-  > - cryptography: The correctness of any cipher or decoding logic.
-  > - history: The accuracy of historical references.
-  > - geography: The spatial logic and map alignment.
-  > - logic: The overall consistency and deductive reasoning."
+  > - advancement: Does it seem to advance the riddle?
+  > - coherence: Does it seem coherent?
+  > - plausibility: Does it seem plausible?"
 
 
 ## ⚙️ Spécifications Techniques & Traçabilité
