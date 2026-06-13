@@ -283,7 +283,12 @@ class NexusEngine:
             log_callback(f"Evaluating multi-criteria scores for {len(merged_pistes)} final pistes...")
         await asyncio.gather(*(self._evaluate_multi_criteria(piste, context_str) for piste in merged_pistes))
 
-        # 5. Avocat du Diable / Cartographe
+        # 5. Solver de Piste (L'Exécuteur)
+        if log_callback:
+            log_callback("Running Solver de Piste (L'Exécuteur) to generate and execute test protocols...")
+        await asyncio.gather(*(self._run_solver(piste, context_str, log_callback) for piste in merged_pistes))
+
+        # 6. Avocat du Diable / Cartographe
         if log_callback:
             log_callback('Running Avocat du Diable & Cartographe checks...')
         for piste in merged_pistes:
@@ -295,6 +300,46 @@ class NexusEngine:
 
         if log_callback:
             log_callback("Auto cycle complete. Ready for next loop.")
+
+    async def _run_solver(self, piste: PisteResolution, context_str: str, log_callback=None):
+        """Asks DeepSeek to act as a Solver, generate a Python test script, and execute it."""
+        solver_prompt = f"""You are the Solver Agent (L'Exécuteur).
+Your goal is to test and verify the given hypothesis using a Chain of Thought.
+First, explain your reasoning (CoT) on how to test this hypothesis.
+Then, if a computational check is needed (e.g., deciphering text, math, logic validation), provide a single valid Python script enclosed in ```python ... ``` blocks.
+The script must print its final result to standard output. Do not use external APIs or complex dependencies unless absolutely necessary.
+If no script is needed, provide your logical deduction.
+
+Context:
+{context_str}
+
+Hypothesis:
+{piste.hypothese_de_depart}
+"""
+        try:
+            response = await deepseek_client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "system", "content": "You are a Python executor agent."}, {"role": "user", "content": solver_prompt}],
+                temperature=0.2
+            )
+            content = response.choices[0].message.content.strip()
+
+            # Extract python code if present
+            import re
+
+            code_match = re.search(r'```python\s*(.*?)\s*```', content, re.DOTALL)
+
+            if code_match:
+                script_code = code_match.group(1)
+                piste.protocole_de_test = f"Reasoning:\n{content}\n\nScript:\n{script_code}"
+                piste.resultat_du_test = "Execution disabled for security (requires sandbox environment)."
+            else:
+                piste.protocole_de_test = f"Logical Deduction:\n{content}"
+                piste.resultat_du_test = "No script executed."
+
+        except Exception as e:
+            piste.protocole_de_test = f"Solver failed: {str(e)}"
+            piste.resultat_du_test = "Error"
 
     async def propose_paths(self, n: int = 5):
         """Generates N parallel pistes based on the current top piste or base context."""

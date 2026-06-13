@@ -21,7 +21,23 @@ Le système est articulé autour de plusieurs rôles d'agents principaux, orches
   > If you need specific, missing details from the visual clues, you may output exactly 'VISUAL_QUERY: <your question about the image>' as your response. The system will look at the image and provide the answer.
   > Otherwise, provide only the reasoning text. Be direct and concise."
 
-### 3. L'Avocat du Diable (Vérificateur & Critique)
+### 3. Le Solver de Piste (L'Exécuteur)
+* **Mission :** Tester de façon concrète les hypothèses générées à l'aide d'un processus de raisonnement (Chain of Thought).
+* **Place dans le cycle :** Générateur d'idées ──► Cartographe (ChromaDB) ──► SOLVER DE PISTE ──► Avocat du Diable ──► Arbitre.
+* **Process Interne (CoT & Outils) :**
+  Pour ne pas dériver, cet agent utilise une *Chain of Thought* (CoT) interne.
+  1. **Réflexion (CoT) :** "Pour tester cette hypothèse, je dois d'abord extraire le texte crypté de la page 4, puis appliquer l'algorithme."
+  2. **Appel d'outils (Scripting) :** Il génère un script Python pour valider de façon computationnelle son hypothèse (ex. casser un code, mathématiques).
+  3. **Résultat :** Il produit un livrable stocké dans `protocole_de_test` et `resultat_du_test`.
+* **Système Prompt :**
+  > "You are the Solver Agent (L'Exécuteur).
+  > Your goal is to test and verify the given hypothesis using a Chain of Thought.
+  > First, explain your reasoning (CoT) on how to test this hypothesis.
+  > Then, if a computational check is needed (e.g., deciphering text, math, logic validation), provide a single valid Python script enclosed in ```python ... ``` blocks.
+  > The script must print its final result to standard output. Do not use external APIs or complex dependencies unless absolutely necessary.
+  > If no script is needed, provide your logical deduction."
+
+### 4. L'Avocat du Diable (Vérificateur & Critique)
 * **Mission :** Éliminer impitoyablement les hallucinations et les failles logiques. Il scrute chaque hypothèse. Si le score total d'une hypothèse est jugé trop bas (score < 16.0 / 40.0), il marque la piste comme "Fausse Piste", ce qui déclenche le mécanisme de Backtracking.
 * **Système Prompt :**
   > "You are the Critic Agent. Your job is to rigorously cross-examine the given hypothesis.
@@ -29,13 +45,13 @@ Le système est articulé autour de plusieurs rôles d'agents principaux, orches
   > If you need specific, missing details from the visual clues to evaluate this properly, you may output exactly 'VISUAL_QUERY: <your question about the image>' anywhere in your response.
   > Otherwise, you must return a JSON-like structure outlining the weaknesses and a detailed feedback string."
 
-### 4. L'Agent Cartographe (Mémoire Vectorielle)
+### 5. L'Agent Cartographe (Mémoire Vectorielle)
 * **Mission :** Éviter la redondance et le surcalcul en s'assurant qu'une fausse piste n'est pas explorée deux fois.
 * **Fonctionnement :** Compare chaque nouvelle idée avec la base de données (ChromaDB) des fausses pistes déjà rejetées via des similarités de plongement (embeddings). Si la distance cosinus est trop faible (ex: < 0.2), l'idée est immédiatement jetée.
 * **Système Prompt de Déduplication Symbolique (L'Abstracteur) :**
   > "You are the Abstractor Agent. Extract strict facts from the hypothesis. Return ONLY a JSON object with keys: 'location', 'method', 'key'."
 
-### 5. L'Arbitre des Pistes (Évaluateur Multi-Critères)
+### 6. L'Arbitre des Pistes (Évaluateur Multi-Critères)
 * **Mission :** Noter de manière déterministe l'hypothèse pour décider de son sort.
 * **Système Prompt :**
   > "You are a panel of expert judges (Cryptography, History, Geography, Logic).
@@ -63,13 +79,18 @@ Lorsqu'un nœud mène à une conclusion impossible (ex: score très faible par l
 
 ### Prérequis
 *   Python 3.11+
+*   Le paquet système `graphviz` (pour le rendu de l'arbre de raisonnement)
 *   A DeepSeek API Key
 *   A Google Gemini API Key
 
 ### Configuration
 
 1. **Clone the repository and navigate to the directory.**
-2. **Install the dependencies:**
+2. **Install System Dependencies (Ubuntu/Debian):**
+   ```bash
+   sudo apt-get update && sudo apt-get install -y graphviz
+   ```
+3. **Install Python dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
@@ -82,7 +103,11 @@ Lorsqu'un nœud mène à une conclusion impossible (ex: score très faible par l
 
 ## 🚀 Usage
 
-RiddleNexus is operated via a clean, interactive Streamlit interface.
+RiddleNexus is operated via a clean, interactive Streamlit interface which features:
+*   **Visual Reasoning Tree:** A Graphviz rendered directional diagram showing the evolution of hypotheses.
+*   **Parameterization:** Allows configuring the number of ideas/pistes generated per reasoning cycle.
+*   **Deep JSON Visibility:** Expanding views of the entire Riddle State or individual reasoning tracks for deep observability.
+*   **Architecture Flow Tracker:** A visual banner tracking the active step in the S.M.A.R.E. logic.
 
 1. **Start the application:**
    ```bash

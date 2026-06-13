@@ -69,7 +69,7 @@ with col1:
 
     st.markdown("---")
     st.subheader("S.M.A.R.E. Architecture Flow")
-    st.info("🔄 Superviseur ➔ 💡 Générateur d'Idées ➔ 🗺️ Cartographe (Deduplication) ➔ ⚖️ Avocat du Diable (Critique) ➔ 🏆 Arbitre (Evaluation)")
+    st.info("🔄 Superviseur ➔ 💡 Générateur d'Idées ➔ 🗺️ Cartographe (Deduplication) ➔ ⚙️ Solver de Piste (L'Exécuteur) ➔ ⚖️ Avocat du Diable (Critique) ➔ 🏆 Arbitre (Evaluation)")
 
     st.markdown("---")
     st.subheader("Visual Reasoning Tree")
@@ -108,6 +108,15 @@ with col1:
     for idx, piste in enumerate(current_pistes):
         with st.expander(f"Piste #{idx+1} - Total Score: {piste.score_elo:.0f}", expanded=(idx==0)):
             st.write(f"**Text:** {piste.hypothese_de_depart}")
+
+            if piste.protocole_de_test and piste.protocole_de_test != "Aucun":
+                st.write("**⚙️ Solver Protocol:**")
+                st.code(piste.protocole_de_test, language="markdown")
+
+            if piste.resultat_du_test:
+                st.write("**⚙️ Solver Result:**")
+                st.text(piste.resultat_du_test)
+
             if piste.analyse_avocat_du_diable:
                 st.write(f"**Critic Feedback:** {piste.analyse_avocat_du_diable.feedback}")
             st.write("**Full JSON Data:**")
