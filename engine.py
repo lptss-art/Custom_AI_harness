@@ -21,7 +21,12 @@ Otherwise, provide ONLY your hypothesis. IMPORTANT: Your hypothesis MUST be exac
     """You are the Lateral-Thinking Proposer Agent in a multi-agent system solving a treasure hunt riddle.
 Your goal is to generate an improbable, out-of-the-box, or lateral thinking hypothesis that challenges obvious assumptions.
 If you need specific, missing details from the visual clues, you may output exactly "VISUAL_QUERY: <your question about the image>".
-Otherwise, provide ONLY your hypothesis. IMPORTANT: Your hypothesis MUST be exactly ONE SINGLE, short and concise sentence. Do not add any explanations."""
+Otherwise, provide ONLY your hypothesis. IMPORTANT: Your hypothesis MUST be exactly ONE SINGLE, short and concise sentence. Do not add any explanations.""",
+
+    """You are the Combiner Proposer Agent in a multi-agent system solving a treasure hunt riddle.
+Your goal is to review the "[OTHER ACTIVE TRACKS FOR INSPIRATION & COMBINATION]" and synthesize a completely new hypothesis by combining the most intriguing insights from multiple different tracks.
+If you need specific, missing details from the visual clues, you may output exactly "VISUAL_QUERY: <your question about the image>".
+Otherwise, provide ONLY your combined hypothesis. IMPORTANT: Your hypothesis MUST be exactly ONE SINGLE, short and concise sentence. Do not add any explanations."""
 ]
 
 CRITIC_PROMPT = """You are the Critic Agent (L'Avocat du Diable). Your job is to rigorously cross-examine the given hypothesis and enumerate very critically all the flaws in the reasoning chain to eliminate hallucinations.
@@ -235,6 +240,19 @@ class NexusEngine:
         if log_callback:
             log_callback(f"Starting auto cycle for generation {depth} with {n} parallel paths using diverse prompts and mixed parents...")
 
+        # Get all active leaf nodes to provide as global context for inspiration/combination
+        pistes_parentes_ids = {pid for piste in self.state.pistes.values() if piste.pistes_parentes for pid in piste.pistes_parentes}
+        active_leaf_nodes = [piste for piste in self.state.pistes.values() if piste.id_piste not in pistes_parentes_ids and piste.statut not in ["Fausse Piste", "Bloquée par Parent"]]
+        active_leaf_nodes.sort(key=lambda x: x.score_elo, reverse=True)
+
+        other_tracks_context = ""
+        if active_leaf_nodes:
+            other_tracks_context += "\n\n[OTHER ACTIVE TRACKS FOR INSPIRATION & COMBINATION]\n"
+            for leaf in active_leaf_nodes[:5]: # Top 5 active tracks
+                other_tracks_context += f"- Track ID {leaf.id_piste[:8]}: {leaf.hypothese_de_depart}\n"
+                if leaf.output_simple:
+                    other_tracks_context += f"  > Found result: {leaf.output_simple}\n"
+
         # Select a mix of parent pistes to branch from, not just the top one
         parent_candidates = self._get_mixed_parent_candidates()
 
@@ -251,6 +269,9 @@ class NexusEngine:
                 specific_context += f"\nPrevious Reasoning (Parent Checkpoint):\n{parent_piste.hypothese_de_depart}\n"
                 if parent_piste.output_simple:
                     specific_context += f"Result/Modified Riddle from Parent:\n{parent_piste.output_simple}\n"
+
+            # Inject other tracks for cross-pollination
+            specific_context += other_tracks_context
 
             tasks.append(self._generate_and_refine_piste(specific_context, parent_id, depth, log_callback, prompt_template))
 
